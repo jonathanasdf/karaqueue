@@ -9,7 +9,6 @@ import shutil
 import subprocess
 import tempfile
 from typing import Coroutine, List, Optional
-import urllib.request
 import discord
 from discord.ext import commands
 import pytube
@@ -25,8 +24,8 @@ YOUTUBE_PATTERN = re.compile(r'(vi/|v=|/v/|youtu.be/|/embed/)')
 BOT_TOKEN = cfg['DEFAULT']['token']
 GUILD_IDS = [cfg['DEFAULT']['guild_id']]
 MAX_QUEUED = 20
-HOST = urllib.request.urlopen('https://v4.ident.me').read().decode('utf8')
-PORT = cfg['DEFAULT'].get('port', fallback=30033)
+HOST = cfg['DEFAULT'].get('host')
+PORT = cfg['DEFAULT'].get('port')
 
 
 SERVING_DIR = '_generated_videos'
@@ -88,7 +87,7 @@ class Entry:
     def process(self) -> None:
         self.output_path = tempfile.mktemp(
             dir=os.path.dirname(self.audio_path), suffix='.mp4')
-        cmd = f'ffmpeg -i {self.audio_path} -i {self.video_path} -c:v copy -c:a copy {self.output_path}'
+        cmd = f'ffmpeg -i {self.audio_path} -i {self.video_path} -c:v copy -c:a copy -movflags faststart {self.output_path}'
         subprocess.call(cmd, shell=True, stderr=subprocess.DEVNULL,
                         stdout=subprocess.DEVNULL)
 
