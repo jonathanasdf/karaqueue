@@ -1,8 +1,10 @@
 import asyncio
+import configparser
 import dataclasses
 import io
 import itertools
 import logging
+import os
 import re
 import time
 from typing import Coroutine, List, Optional
@@ -13,11 +15,13 @@ import StringProgressBar
 
 
 logging.basicConfig(level=logging.INFO)
+cfg = configparser.ConfigParser()
+cfg.read(os.path.join(os.path.dirname(__file__), 'config.ini'))
 
 
 YOUTUBE_PATTERN = re.compile(r'(vi/|v=|/v/|youtu.be/|/embed/)')
-BOT_TOKEN = open('token', 'r').read()
-GUILD_IDS = [open('guild_id', 'r').read()]
+BOT_TOKEN = cfg['DEFAULT']['token'] 
+GUILD_IDS = [cfg['DEFAULT']['guild_id']]
 MAX_QUEUED = 20
 
 
