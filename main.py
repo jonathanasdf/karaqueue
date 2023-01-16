@@ -1,13 +1,15 @@
 import asyncio
 import configparser
 import dataclasses
-import io
 import itertools
 import logging
 import os
 import re
-import time
+import shutil
+import subprocess
+import tempfile
 from typing import Coroutine, List, Optional
+import urllib.request
 import discord
 from discord.ext import commands
 import pytube
@@ -20,9 +22,17 @@ cfg.read(os.path.join(os.path.dirname(__file__), 'config.ini'))
 
 
 YOUTUBE_PATTERN = re.compile(r'(vi/|v=|/v/|youtu.be/|/embed/)')
-BOT_TOKEN = cfg['DEFAULT']['token'] 
+BOT_TOKEN = cfg['DEFAULT']['token']
 GUILD_IDS = [cfg['DEFAULT']['guild_id']]
 MAX_QUEUED = 20
+HOST = urllib.request.urlopen('https://v4.ident.me').read().decode('utf8')
+PORT = cfg['DEFAULT'].get('port', fallback=30033)
+
+
+SERVING_DIR = '_generated_videos'
+os.makedirs(SERVING_DIR, exist_ok=True)
+for folder in os.listdir(SERVING_DIR):
+    shutil.rmtree(os.path.join(SERVING_DIR, folder))
 
 
 @dataclasses.dataclass
@@ -35,13 +45,13 @@ class LoadTask:
 @dataclasses.dataclass
 class Entry:
     title: str
-    url: str
-    audio_buffer: io.BytesIO
-    video_buffer: io.BytesIO
+    audio_path: str
+    video_path: str
     pitch_shift: int
 
     processed: bool = False
     process_task: Optional[asyncio.Task] = None
+    output_path: str = None
 
     def set_pitch_shift_locked(self, pitch_shift: int) -> None:
         if self.pitch_shift == pitch_shift:
@@ -49,21 +59,38 @@ class Entry:
         self.pitch_shift = pitch_shift
 
     def onchange_locked(self) -> None:
-        self.processed = False
         if self.process_task is not None:
             self.process_task.cancel()
             self.process_task = None
+        self.processed = False
         new_process_task.notify()
 
     def get_process_task(self) -> asyncio.Task:
         async def process():
             await asyncio.to_thread(self.process)
-            self.processed = True
             self.process_task = None
+            self.processed = True
         return asyncio.create_task(process())
 
-    def process(self):
-        time.sleep(10)
+    def delete(self) -> None:
+        if self.process_task is not None:
+            self.process_task.cancel()
+            self.process_task = None
+        self.processed = False
+        shutil.rmtree(os.path.dirname(self.audio_path))
+
+    def url(self) -> str:
+        if not self.processed:
+            raise RuntimeError('task has not been processed!')
+        relpath = os.path.relpath(self.output_path, os.path.join(os.getcwd(), SERVING_DIR))
+        return f'http://{HOST}:{PORT}/{relpath}'
+
+    def process(self) -> None:
+        self.output_path = tempfile.mktemp(
+            dir=os.path.dirname(self.audio_path), suffix='.mp4')
+        cmd = f'ffmpeg -i {self.audio_path} -i {self.video_path} -c:v copy -c:a copy {self.output_path}'
+        subprocess.call(cmd, shell=True, stderr=subprocess.DEVNULL,
+                        stdout=subprocess.DEVNULL)
 
 
 bot = commands.Bot()
@@ -79,7 +106,15 @@ new_load_task = asyncio.Condition()
 
 
 async def _help(ctx: discord.ApplicationContext):
-    resp = ['hello world']
+    resp = [
+        'Commands:',
+        '/q url [pitch]: queue a video from youtube. Also /add or /load.',
+        '/list: show the current playlist.',
+        '/next: play the next entry on the playlist.',
+        '/delete index: delete an entry from the playlist.',
+        '/move from to: change the position of an entry in the playlist.',
+        '/pitch pitch [index]: change the pitch of a video on the playlist. Leave out index to change currently playing video.',
+    ]
     await ctx.respond('\n'.join(resp), ephemeral=True)
 
 
@@ -95,6 +130,11 @@ async def commands(ctx: discord.ApplicationContext):
 
 @bot.slash_command(guild_ids=GUILD_IDS)
 async def q(ctx: discord.ApplicationContext, url: str, pitch: Optional[int] = 0):
+    await _load(ctx, url, pitch)
+
+
+@bot.slash_command(guild_ids=GUILD_IDS)
+async def add(ctx: discord.ApplicationContext, url: str, pitch: Optional[int] = 0):
     await _load(ctx, url, pitch)
 
 
@@ -166,6 +206,8 @@ async def command_next(ctx: discord.ApplicationContext):
 async def _next(ctx: discord.ApplicationContext):
     global current
     async with lock:
+        if current != None:
+            current.delete()
         if len(karaqueue) == 0:
             await ctx.respond(content='No songs in queue! Add one with `/q`')
             return
@@ -175,17 +217,28 @@ async def _next(ctx: discord.ApplicationContext):
     if entry.pitch_shift != 0:
         name = f'name [{entry.pitch_shift:+d}]'
     msg = await ctx.respond(content=f'Loading `{name}`...')
+    if isinstance(msg, discord.Interaction):
+        msg = await msg.original_response()
     async with lock:
         await print_queue_locked(ctx)
     spinner = itertools.cycle(['|', '/', '-', '\\'])
     while not entry.processed:
         await msg.edit(content=f'Loading `{name}`...\n`' + next(spinner)*4 + '`')
         await asyncio.sleep(0.1)
-    await msg.edit(content=f'Now playing: `{name}`\n{entry.url}')
+    await msg.edit(content=f'Now playing: `{name}`\n{entry.url()}')
 
 
 @bot.slash_command(guild_ids=GUILD_IDS)
 async def delete(ctx: discord.ApplicationContext, index: int):
+    _delete(ctx, index)
+
+
+@bot.slash_command(guild_ids=GUILD_IDS)
+async def remove(ctx: discord.ApplicationContext, index: int):
+    _delete(ctx, index)
+
+
+async def _delete(ctx: discord.ApplicationContext, index: int):
     async with lock:
         if index < 1 or index > len(karaqueue):
             await ctx.respond('Invalid index!', ephemeral=True)
@@ -199,6 +252,7 @@ async def delete(ctx: discord.ApplicationContext, index: int):
             async with lock:
                 for i in range(len(karaqueue)):
                     if karaqueue[i] == entry:
+                        karaqueue[i].delete()
                         del karaqueue[i]
                         break
                 await ctx.respond(f'Successfully deleted `{entry.title}` from the queue.')
@@ -215,7 +269,8 @@ async def delete(ctx: discord.ApplicationContext, index: int):
 @bot.slash_command(guild_ids=GUILD_IDS)
 async def move(ctx: discord.ApplicationContext, index_from: int, index_to: int):
     async with lock:
-        if index_from < 1 or index_from > len(karaqueue) or index_to < 1 or index_to > len(karaqueue):
+        if (index_from < 1 or index_from > len(karaqueue)
+                or index_to < 1 or index_to > len(karaqueue)):
             await ctx.respond('Invalid index!', ephemeral=True)
             return
         if index_from <= index_to:
@@ -230,8 +285,7 @@ async def load_youtube(ctx: discord.ApplicationContext, yt: pytube.YouTube, pitc
     loop = asyncio.get_running_loop()
 
     def load_streams():
-        audio_buffer = io.BytesIO()
-        video_buffer = io.BytesIO()
+        tmpdir = tempfile.mkdtemp(dir=SERVING_DIR)
         audio_stream = yt.streams.get_audio_only()
         video_streams = yt.streams.filter(only_video=True)
         video_stream = video_streams.filter(resolution='720p').first()
@@ -250,22 +304,25 @@ async def load_youtube(ctx: discord.ApplicationContext, yt: pytube.YouTube, pitc
                 downloaded += audio_stream.filesize
             progress = StringProgressBar.progressBar.filledBar(
                 total_size, downloaded)
-            asyncio.run_coroutine_threadsafe(ctx.edit(
-                content=f'Loading youtube video `{yt.title}`...\n{progress[0]} {progress[1]:0.0f}% of {total_size_mb:0.1f}Mb'), loop)
+            msg = (f'Loading youtube video `{yt.title}`...\n'
+                   f'{progress[0]} {progress[1]:0.0f}% of {total_size_mb:0.1f}Mb')
+            asyncio.run_coroutine_threadsafe(ctx.edit(content=msg), loop)
 
         yt.register_on_progress_callback(progress_func)
-        audio_stream.stream_to_buffer(audio_buffer)
-        video_stream.stream_to_buffer(video_buffer)
-        return audio_buffer, video_buffer
+        audio_path = audio_stream.download(
+            output_path=tmpdir, filename=f'audio.{audio_stream.subtype}')
+        video_path = video_stream.download(
+            output_path=tmpdir, filename=f'video.{video_stream.subtype}')
+        return audio_path, video_path
 
     try:
-        audio_buffer, video_buffer = await asyncio.to_thread(load_streams)
+        audio_path, video_path = await asyncio.to_thread(load_streams)
     except Exception as err:
         await ctx.respond(content=f'Error: `{err}`', ephemeral=True)
         return None
 
-    entry = Entry(title=yt.title, url=yt.watch_url, audio_buffer=audio_buffer,
-                  video_buffer=video_buffer, pitch_shift=pitch_shift)
+    entry = Entry(title=yt.title, audio_path=audio_path,
+                  video_path=video_path, pitch_shift=pitch_shift)
     async with lock:
         karaqueue.append(entry)
         await print_queue_locked(ctx)
