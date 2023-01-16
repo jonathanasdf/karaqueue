@@ -1,3 +1,4 @@
+pillow
 py-cord[speed]
 pytube
 StringProgressBar

@@ -11,6 +11,7 @@ import tempfile
 from typing import Coroutine, List, Optional
 import discord
 from discord.ext import commands
+from PIL import Image
 import pytube
 import StringProgressBar
 
@@ -25,7 +26,6 @@ BOT_TOKEN = cfg['DEFAULT']['token']
 GUILD_IDS = [cfg['DEFAULT']['guild_id']]
 MAX_QUEUED = 20
 HOST = cfg['DEFAULT'].get('host')
-PORT = cfg['DEFAULT'].get('port')
 
 
 SERVING_DIR = '_generated_videos'
@@ -44,13 +44,12 @@ class LoadTask:
 @dataclasses.dataclass
 class Entry:
     title: str
-    audio_path: str
-    video_path: str
+    original_url: str
+    path: str
     pitch_shift: int
 
     processed: bool = False
     process_task: Optional[asyncio.Task] = None
-    output_path: str = None
 
     def set_pitch_shift_locked(self, pitch_shift: int) -> None:
         if self.pitch_shift == pitch_shift:
@@ -76,20 +75,42 @@ class Entry:
             self.process_task.cancel()
             self.process_task = None
         self.processed = False
-        shutil.rmtree(os.path.dirname(self.audio_path))
+        shutil.rmtree(self.path)
+
+    def _get_server_path(self, path: str) -> str:
+        relpath = os.path.relpath(path, os.path.join(os.getcwd(), SERVING_DIR))
+        return f'https://{HOST}/{relpath}'
 
     def url(self) -> str:
         if not self.processed:
             raise RuntimeError('task has not been processed!')
-        relpath = os.path.relpath(self.output_path, os.path.join(os.getcwd(), SERVING_DIR))
-        return f'http://{HOST}:{PORT}/{relpath}'
+        return self._get_server_path(self.path)
 
     def process(self) -> None:
-        self.output_path = tempfile.mktemp(
-            dir=os.path.dirname(self.audio_path), suffix='.mp4')
-        cmd = f'ffmpeg -i {self.audio_path} -i {self.video_path} -c:v copy -c:a copy -movflags faststart {self.output_path}'
+        audio_path = os.path.join(self.path, 'audio.mp4')
+        video_path = os.path.join(self.path, 'video.mp4')
+        output = tempfile.mktemp(dir=self.path, suffix='.mp4')
+        cmd = f'ffmpeg -i {audio_path} -i {video_path} -c:v copy -c:a copy -movflags faststart {output}'
         subprocess.call(cmd, shell=True, stderr=subprocess.DEVNULL,
                         stdout=subprocess.DEVNULL)
+
+        thumb_path = os.path.join(self.path, 'thumb.jpg')
+        thumb = Image.open(thumb_path)
+
+        with open(os.path.join(self.path, 'index.html'), 'w') as f:
+            f.write(f"""<!DOCTYPE html>
+<html>
+    <head>
+        <meta property="og:title" content="{self.title}" />
+        <meta property="og:type" content="video" />
+        <meta property="og:image" content="{self._get_server_path(thumb_path)}" />
+        <meta property="og:video" content="{self._get_server_path(output)}" />
+        <meta property="og:video:width" content="{thumb.width}" />
+        <meta property="og:video:height" content="{thumb.height}" />
+        <meta property="og:video:type" content="video/mp4" />
+    </head>
+</html>
+""")
 
 
 bot = commands.Bot()
@@ -285,8 +306,8 @@ async def load_youtube(ctx: discord.ApplicationContext, yt: pytube.YouTube, pitc
 
     def load_streams():
         tmpdir = tempfile.mkdtemp(dir=SERVING_DIR)
-        audio_stream = yt.streams.get_audio_only()
-        video_streams = yt.streams.filter(only_video=True)
+        audio_stream = yt.streams.filter(subtype='mp4').get_audio_only()
+        video_streams = yt.streams.filter(subtype='mp4', only_video=True)
         video_stream = video_streams.filter(resolution='720p').first()
         if video_stream is None:
             video_stream = video_streams.order_by('resolution').last()
@@ -308,20 +329,21 @@ async def load_youtube(ctx: discord.ApplicationContext, yt: pytube.YouTube, pitc
             asyncio.run_coroutine_threadsafe(ctx.edit(content=msg), loop)
 
         yt.register_on_progress_callback(progress_func)
-        audio_path = audio_stream.download(
-            output_path=tmpdir, filename=f'audio.{audio_stream.subtype}')
-        video_path = video_stream.download(
-            output_path=tmpdir, filename=f'video.{video_stream.subtype}')
-        return audio_path, video_path
+        audio_stream.download(output_path=tmpdir, filename='audio.mp4')
+        video_stream.download(output_path=tmpdir, filename='video.mp4')
+        thumb_cmd = f'ffmpeg -i {os.path.join(tmpdir, "video.mp4")} -vf "select=eq(n\,0)" -q:v 3 {os.path.join(tmpdir, "thumb.jpg")}'
+        subprocess.call(thumb_cmd, shell=True, stderr=subprocess.DEVNULL,
+                        stdout=subprocess.DEVNULL)
+        return tmpdir
 
     try:
-        audio_path, video_path = await asyncio.to_thread(load_streams)
+        path = await asyncio.to_thread(load_streams)
     except Exception as err:
         await ctx.respond(content=f'Error: `{err}`', ephemeral=True)
         return None
 
-    entry = Entry(title=yt.title, audio_path=audio_path,
-                  video_path=video_path, pitch_shift=pitch_shift)
+    entry = Entry(title=yt.title, original_url=yt.watch_url,
+                  path=path, pitch_shift=pitch_shift)
     async with lock:
         karaqueue.append(entry)
         await print_queue_locked(ctx)
