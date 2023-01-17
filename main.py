@@ -1,11 +1,15 @@
 import asyncio
 import configparser
+import contextlib
 import dataclasses
+import io
 import itertools
 import logging
 import os
+import random
 import re
 import shutil
+import string
 import subprocess
 import tempfile
 from typing import Coroutine, List, Optional
@@ -32,6 +36,14 @@ SERVING_DIR = '_generated_videos'
 os.makedirs(SERVING_DIR, exist_ok=True)
 for folder in os.listdir(SERVING_DIR):
     shutil.rmtree(os.path.join(SERVING_DIR, folder))
+
+
+def call(cmd: str) -> None:
+    try:
+        subprocess.run(cmd, shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    except subprocess.CalledProcessError as e:
+        logging.error(e.stdout.decode('utf-8'))
+        raise
 
 
 @dataclasses.dataclass
@@ -84,15 +96,19 @@ class Entry:
     def url(self) -> str:
         if not self.processed:
             raise RuntimeError('task has not been processed!')
-        return self._get_server_path(self.path)
+        return self._get_server_path(self.path) + '?' + ''.join(random.choice(string.ascii_letters) for _ in range(8))
 
     def process(self) -> None:
-        audio_path = os.path.join(self.path, 'audio.mp4')
+        audio_path = os.path.join(self.path, 'audio.wav')
+        if self.pitch_shift:
+            shift_path = os.path.join(self.path, 'shifted.wav')
+            pitch_cents = int(self.pitch_shift * 100)
+            call(f'sox {audio_path} {shift_path} pitch {pitch_cents}')
+            audio_path = shift_path
         video_path = os.path.join(self.path, 'video.mp4')
         output = tempfile.mktemp(dir=self.path, suffix='.mp4')
-        cmd = f'ffmpeg -i {audio_path} -i {video_path} -c:v copy -c:a copy -movflags faststart {output}'
-        subprocess.call(cmd, shell=True, stderr=subprocess.DEVNULL,
-                        stdout=subprocess.DEVNULL)
+        call(f'ffmpeg -i {audio_path} -i {video_path} '
+             f'-c:v copy -c:a aac -b:a 160k -movflags faststart {output}')
 
         thumb_path = os.path.join(self.path, 'thumb.jpg')
         thumb = Image.open(thumb_path)
@@ -200,16 +216,22 @@ async def _load(ctx: discord.ApplicationContext, url: str, pitch: int):
 @bot.slash_command(guild_ids=GUILD_IDS)
 async def pitch(ctx: discord.ApplicationContext, pitch: int, index: Optional[int] = 0):
     async with lock:
-        entry = None
+        if index < 0 or index > len(karaqueue):
+            await ctx.respond('Invalid index!', ephemeral=True)
+            return
         if index == 0:
-            if current is not None:
-                entry = current
+            if current is None:
+                await ctx.respond('No song currently playing!', ephemeral=True)
+                return
+            current.set_pitch_shift_locked(pitch)
+            current.onchange_locked()
         elif index <= len(karaqueue):
             entry = karaqueue[index-1]
-        if entry:
             entry.set_pitch_shift_locked(pitch)
             await print_queue_locked(ctx)
             entry.onchange_locked()
+    if index == 0:
+        await _update_with_current(ctx)
 
 
 @bot.slash_command(name='list', guild_ids=GUILD_IDS)
@@ -231,11 +253,15 @@ async def _next(ctx: discord.ApplicationContext):
         if len(karaqueue) == 0:
             await ctx.respond(content='No songs in queue! Add one with `/q`')
             return
-        entry = karaqueue.pop(0)
-        current = entry
+        current = karaqueue.pop(0)
+    await _update_with_current(ctx)
+
+
+async def _update_with_current(ctx: discord.ApplicationContext):
+    entry = current
     name = entry.title
     if entry.pitch_shift != 0:
-        name = f'name [{entry.pitch_shift:+d}]'
+        name = f'{name} [{entry.pitch_shift:+d}]'
     msg = await ctx.respond(content=f'Loading `{name}`...')
     if isinstance(msg, discord.Interaction):
         msg = await msg.original_response()
@@ -331,9 +357,10 @@ async def load_youtube(ctx: discord.ApplicationContext, yt: pytube.YouTube, pitc
         yt.register_on_progress_callback(progress_func)
         audio_stream.download(output_path=tmpdir, filename='audio.mp4')
         video_stream.download(output_path=tmpdir, filename='video.mp4')
-        thumb_cmd = f'ffmpeg -i {os.path.join(tmpdir, "video.mp4")} -vf "select=eq(n\,0)" -q:v 3 {os.path.join(tmpdir, "thumb.jpg")}'
-        subprocess.call(thumb_cmd, shell=True, stderr=subprocess.DEVNULL,
-                        stdout=subprocess.DEVNULL)
+        call(f'ffmpeg -i {os.path.join(tmpdir, "audio.mp4")} '
+             f'-ac 2 -f wav {os.path.join(tmpdir, "audio.wav")}')
+        call(f'ffmpeg -i {os.path.join(tmpdir, "video.mp4")} -vf "select=eq(n\,0)" '
+             f'-q:v 3 {os.path.join(tmpdir, "thumb.jpg")}')
         return tmpdir
 
     try:
