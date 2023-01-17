@@ -1,8 +1,6 @@
 import asyncio
 import configparser
-import contextlib
 import dataclasses
-import io
 import itertools
 import logging
 import os
@@ -12,7 +10,7 @@ import shutil
 import string
 import subprocess
 import tempfile
-from typing import Coroutine, List, Optional
+from typing import Callable, List, Optional
 import discord
 from discord.ext import commands
 from PIL import Image
@@ -40,17 +38,11 @@ for folder in os.listdir(SERVING_DIR):
 
 def call(cmd: str) -> None:
     try:
-        subprocess.run(cmd, shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        subprocess.run(cmd, shell=True, check=True,
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     except subprocess.CalledProcessError as e:
         logging.error(e.stdout.decode('utf-8'))
         raise
-
-
-@dataclasses.dataclass
-class LoadTask:
-    ctx: discord.ApplicationContext
-    msg: str
-    load: Coroutine
 
 
 @dataclasses.dataclass
@@ -59,7 +51,11 @@ class Entry:
     original_url: str
     path: str
     pitch_shift: int
+    load_fn: Callable[['Entry'], None]
 
+    loaded: bool = False
+    load_msg: str = ''
+    error_msg: str = ''
     processed: bool = False
     process_task: Optional[asyncio.Task] = None
 
@@ -73,6 +69,8 @@ class Entry:
             self.process_task.cancel()
             self.process_task = None
         self.processed = False
+        self.load_msg = ''
+        self.error_msg = ''
         new_process_task.notify()
 
     def get_process_task(self) -> asyncio.Task:
@@ -96,15 +94,27 @@ class Entry:
     def url(self) -> str:
         if not self.processed:
             raise RuntimeError('task has not been processed!')
+        if not self.pitch_shift:
+            return self.original_url
         return self._get_server_path(self.path) + '?' + ''.join(random.choice(string.ascii_letters) for _ in range(8))
 
     def process(self) -> None:
+        if not self.pitch_shift:
+            return
+
+        if not self.loaded:
+            self.load_fn(self)
+            self.loaded = True
+
         audio_path = os.path.join(self.path, 'audio.wav')
         if self.pitch_shift:
+            self.load_msg = f'Loading youtube video `{self.title}`...\nShifting pitch...'
             shift_path = os.path.join(self.path, 'shifted.wav')
             pitch_cents = int(self.pitch_shift * 100)
             call(f'sox {audio_path} {shift_path} pitch {pitch_cents}')
             audio_path = shift_path
+
+        self.load_msg = f'Loading youtube video `{self.title}`...\nCreating video...'
         video_path = os.path.join(self.path, 'video.mp4')
         output = tempfile.mktemp(dir=self.path, suffix='.mp4')
         call(f'ffmpeg -i {audio_path} -i {video_path} '
@@ -137,19 +147,16 @@ karaqueue: List[Entry] = []
 lock = asyncio.Lock()
 new_process_task = asyncio.Condition(lock)
 
-loadqueue: List[LoadTask] = []
-new_load_task = asyncio.Condition()
-
 
 async def _help(ctx: discord.ApplicationContext):
     resp = [
         'Commands:',
-        '/q url [pitch]: queue a video from youtube. Also /add or /load.',
-        '/list: show the current playlist.',
-        '/next: play the next entry on the playlist.',
-        '/delete index: delete an entry from the playlist.',
-        '/move from to: change the position of an entry in the playlist.',
-        '/pitch pitch [index]: change the pitch of a video on the playlist. Leave out index to change currently playing video.',
+        '`/q url [pitch]`: queue a video from youtube. Also `/add` or `/load`.',
+        '`/list`: show the current playlist.',
+        '`/next`: play the next entry on the playlist.',
+        '`/delete index`: delete an entry from the playlist. Also `/remove`.',
+        '`/move from to`: change the position of an entry in the playlist.',
+        '`/pitch pitch [index]`: change the pitch of a video on the playlist. Leave out index to change currently playing video.',
     ]
     await ctx.respond('\n'.join(resp), ephemeral=True)
 
@@ -184,9 +191,6 @@ async def _load(ctx: discord.ApplicationContext, url: str, pitch: int):
         if len(karaqueue) >= MAX_QUEUED:
             await ctx.respond('Queue is full! Delete some items with `/delete`', ephemeral=True)
             return
-        if len(karaqueue) + len(loadqueue) >= MAX_QUEUED:
-            await ctx.respond('Too many pending requests, please try again later.', ephemeral=True)
-            return
     await ctx.respond(f'Loading `{url}`...', ephemeral=True)
     if 'youtu' in url or 'ytimg' in url:
         parts = re.split(YOUTUBE_PATTERN, url)
@@ -200,15 +204,8 @@ async def _load(ctx: discord.ApplicationContext, url: str, pitch: int):
 
         await ctx.edit(content=f'Loading youtube id `{id}`...')
         yt = pytube.YouTube(f'http://youtube.com/watch?v={id}')
-        msg = f'Loading youtube video `{yt.title}`...'
-        await ctx.edit(content=msg)
-
-        async def load_fn():
-            await load_youtube(ctx, yt, pitch)
-        async with new_load_task:
-            await ctx.edit(content=msg + f'\nWaiting for {len(loadqueue)+1} tasks...')
-            loadqueue.append(LoadTask(ctx=ctx, msg=msg, load=load_fn()))
-            new_load_task.notify()
+        await ctx.edit(content=f'Loading youtube video `{yt.title}`...')
+        await load_youtube(ctx, yt, pitch)
     else:
         await ctx.respond(f'Unrecognized url!', ephemeral=True)
 
@@ -258,30 +255,39 @@ async def _next(ctx: discord.ApplicationContext):
 
 
 async def _update_with_current(ctx: discord.ApplicationContext):
-    entry = current
+    entry: Entry = current
     name = entry.title
     if entry.pitch_shift != 0:
         name = f'{name} [{entry.pitch_shift:+d}]'
-    msg = await ctx.respond(content=f'Loading `{name}`...')
-    if isinstance(msg, discord.Interaction):
-        msg = await msg.original_response()
+    resp = await ctx.respond(content=f'Loading `{name}`...')
+    if isinstance(resp, discord.Interaction):
+        resp = await resp.original_response()
     async with lock:
         await print_queue_locked(ctx)
     spinner = itertools.cycle(['|', '/', '-', '\\'])
+    cur_msg = ''
     while not entry.processed:
-        await msg.edit(content=f'Loading `{name}`...\n`' + next(spinner)*4 + '`')
-        await asyncio.sleep(0.1)
-    await msg.edit(content=f'Now playing: `{name}`\n{entry.url()}')
+        if entry.error_msg:
+            await resp.edit(content=entry.error_msg)
+            return
+        if entry.load_msg:
+            if entry.load_msg != cur_msg:
+                await resp.edit(content=entry.load_msg)
+            await asyncio.sleep(0.1)
+        else:
+            await resp.edit(content=f'Loading `{name}`...\n`' + next(spinner)*4 + '`')
+            await asyncio.sleep(0.1)
+    await resp.edit(content=f'Now playing: `{name}`\n{entry.url()}')
 
 
 @bot.slash_command(guild_ids=GUILD_IDS)
 async def delete(ctx: discord.ApplicationContext, index: int):
-    _delete(ctx, index)
+    await _delete(ctx, index)
 
 
 @bot.slash_command(guild_ids=GUILD_IDS)
 async def remove(ctx: discord.ApplicationContext, index: int):
-    _delete(ctx, index)
+    await _delete(ctx, index)
 
 
 async def _delete(ctx: discord.ApplicationContext, index: int):
@@ -328,18 +334,15 @@ async def move(ctx: discord.ApplicationContext, index_from: int, index_to: int):
 
 
 async def load_youtube(ctx: discord.ApplicationContext, yt: pytube.YouTube, pitch_shift: int):
-    loop = asyncio.get_running_loop()
 
-    def load_streams():
-        tmpdir = tempfile.mkdtemp(dir=SERVING_DIR)
+    def load_streams(entry: Entry):
         audio_stream = yt.streams.filter(subtype='mp4').get_audio_only()
         video_streams = yt.streams.filter(subtype='mp4', only_video=True)
         video_stream = video_streams.filter(resolution='720p').first()
         if video_stream is None:
             video_stream = video_streams.order_by('resolution').last()
         if audio_stream is None or video_stream is None:
-            asyncio.run_coroutine_threadsafe(ctx.respond(
-                content=f'Error: missing either audio or video stream.', ephemeral=True), loop)
+            entry.error_msg = 'Error: missing either audio or video stream.'
             return None, None
         total_size = audio_stream.filesize + video_stream.filesize
         total_size_mb = total_size / 1024 / 1024
@@ -350,27 +353,20 @@ async def load_youtube(ctx: discord.ApplicationContext, yt: pytube.YouTube, pitc
                 downloaded += audio_stream.filesize
             progress = StringProgressBar.progressBar.filledBar(
                 total_size, downloaded)
-            msg = (f'Loading youtube video `{yt.title}`...\n'
-                   f'{progress[0]} {progress[1]:0.0f}% of {total_size_mb:0.1f}Mb')
-            asyncio.run_coroutine_threadsafe(ctx.edit(content=msg), loop)
+            entry.load_msg = (f'Loading youtube video `{yt.title}`...\n'
+                              f'Downloading: {progress[0]} {progress[1]:0.0f}% of {total_size_mb:0.1f}Mb')
 
         yt.register_on_progress_callback(progress_func)
-        audio_stream.download(output_path=tmpdir, filename='audio.mp4')
-        video_stream.download(output_path=tmpdir, filename='video.mp4')
-        call(f'ffmpeg -i {os.path.join(tmpdir, "audio.mp4")} '
-             f'-ac 2 -f wav {os.path.join(tmpdir, "audio.wav")}')
-        call(f'ffmpeg -i {os.path.join(tmpdir, "video.mp4")} -vf "select=eq(n\,0)" '
-             f'-q:v 3 {os.path.join(tmpdir, "thumb.jpg")}')
-        return tmpdir
+        audio_stream.download(output_path=entry.path, filename='audio.mp4')
+        video_stream.download(output_path=entry.path, filename='video.mp4')
+        call(f'ffmpeg -i {os.path.join(entry.path, "audio.mp4")} '
+             f'-ac 2 -f wav {os.path.join(entry.path, "audio.wav")}')
+        call(f'ffmpeg -i {os.path.join(entry.path, "video.mp4")} -vf "select=eq(n\,0)" '
+             f'-q:v 3 {os.path.join(entry.path, "thumb.jpg")}')
 
-    try:
-        path = await asyncio.to_thread(load_streams)
-    except Exception as err:
-        await ctx.respond(content=f'Error: `{err}`', ephemeral=True)
-        return None
-
+    path = tempfile.mkdtemp(dir=SERVING_DIR)
     entry = Entry(title=yt.title, original_url=yt.watch_url,
-                  path=path, pitch_shift=pitch_shift)
+                  path=path, pitch_shift=pitch_shift, load_fn=load_streams)
     async with lock:
         karaqueue.append(entry)
         await print_queue_locked(ctx)
@@ -413,17 +409,6 @@ async def print_queue_locked(ctx: discord.ApplicationContext):
 
 
 def main():
-    async def background_load():
-        while True:
-            async with new_load_task:
-                while len(loadqueue) == 0:
-                    await new_load_task.wait()
-                loadtask = loadqueue.pop(0)
-                for i, task in enumerate(loadqueue):
-                    await task.ctx.edit(content=task.msg + f'\nWaiting for {i+1} tasks...')
-            await loadtask.load
-    bot.loop.create_task(background_load())
-
     async def background_process():
         while True:
             entry_to_process = None
