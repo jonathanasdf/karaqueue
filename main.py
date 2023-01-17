@@ -10,7 +10,7 @@ import shutil
 import string
 import subprocess
 import tempfile
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, Union
 import discord
 from discord.ext import commands
 from PIL import Image
@@ -27,6 +27,7 @@ YOUTUBE_PATTERN = re.compile(r'(vi/|v=|/v/|youtu.be/|/embed/)')
 BOT_TOKEN = cfg['DEFAULT']['token']
 GUILD_IDS = [cfg['DEFAULT']['guild_id']]
 MAX_QUEUED = 20
+MAX_QUEUED_PER_USER = 2
 HOST = cfg['DEFAULT'].get('host')
 
 
@@ -52,6 +53,7 @@ class Entry:
     path: str
     pitch_shift: int
     load_fn: Callable[['Entry'], None]
+    uid: int
 
     loaded: bool = False
     load_msg: str = ''
@@ -148,6 +150,44 @@ lock = asyncio.Lock()
 new_process_task = asyncio.Condition(lock)
 
 
+DiscordContext = Union[discord.ApplicationContext, discord.Interaction]
+
+
+async def respond(ctx: DiscordContext, *args, **kwargs) -> Union[discord.Interaction, discord.WebhookMessage]:
+    interaction: discord.Interaction
+    if isinstance(ctx, discord.ApplicationContext):
+        interaction = ctx.interaction
+    else:
+        interaction = ctx
+    try:
+        if not interaction.response.is_done():
+            return await interaction.response.send_message(*args, **kwargs)
+        else:
+            return await interaction.followup.send(*args, **kwargs)
+    except discord.errors.InteractionResponded:
+        return await interaction.followup.send(*args, **kwargs)
+
+
+async def edit(ctx: DiscordContext, *args, **kwargs) -> Union[discord.Interaction, discord.WebhookMessage]:
+    interaction: discord.Interaction
+    if isinstance(ctx, discord.ApplicationContext):
+        interaction = ctx.interaction
+    else:
+        interaction = ctx
+    return await interaction.edit_original_response(*args, **kwargs)
+
+
+async def delete(ctx: DiscordContext, *args, **kwargs) -> Union[discord.Interaction, discord.WebhookMessage]:
+    interaction: discord.Interaction
+    if isinstance(ctx, discord.ApplicationContext):
+        interaction = ctx.interaction
+        if not interaction.response.is_done():
+            await ctx.defer()
+    else:
+        interaction = ctx
+    return await interaction.delete_original_response(*args, **kwargs)
+
+
 async def _help(ctx: discord.ApplicationContext):
     resp = [
         'Commands:',
@@ -158,67 +198,89 @@ async def _help(ctx: discord.ApplicationContext):
         '`/move from to`: change the position of an entry in the playlist.',
         '`/pitch pitch [index]`: change the pitch of a video on the playlist. Leave out index to change currently playing video.',
     ]
-    await ctx.respond('\n'.join(resp), ephemeral=True)
+    await respond(ctx, '\n'.join(resp), ephemeral=True)
 
 
-@bot.slash_command(guild_ids=GUILD_IDS)
-async def help(ctx: discord.ApplicationContext):
+@bot.slash_command(name='help', guild_ids=GUILD_IDS)
+async def command_help(ctx: discord.ApplicationContext):
     await _help(ctx)
 
 
-@bot.slash_command(guild_ids=GUILD_IDS)
-async def commands(ctx: discord.ApplicationContext):
+@bot.slash_command(name='commands', guild_ids=GUILD_IDS)
+async def command_commands(ctx: discord.ApplicationContext):
     await _help(ctx)
 
 
-@bot.slash_command(guild_ids=GUILD_IDS)
-async def q(ctx: discord.ApplicationContext, url: str, pitch: Optional[int] = 0):
-    await _load(ctx, url, pitch)
+class AddSongModal(discord.ui.Modal):
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.add_item(discord.ui.InputText(label="URL"))
+        self.add_item(discord.ui.InputText(
+            label="Pitch Shift (optional)", required=False))
+
+    async def callback(self, interaction: discord.Interaction):
+        url = self.children[0].value
+        pitch_shift = 0
+        if self.children[1].value:
+            pitch_shift = int(self.children[1].value)
+        await _load(interaction, url, pitch_shift)
 
 
-@bot.slash_command(guild_ids=GUILD_IDS)
-async def add(ctx: discord.ApplicationContext, url: str, pitch: Optional[int] = 0):
-    await _load(ctx, url, pitch)
+@bot.slash_command(name='q', guild_ids=GUILD_IDS)
+async def command_q(ctx: discord.ApplicationContext):
+    await send_add_song_modal(ctx)
 
 
-@bot.slash_command(guild_ids=GUILD_IDS)
-async def load(ctx: discord.ApplicationContext, url: str, pitch: Optional[int] = 0):
-    await _load(ctx, url, pitch)
+@bot.slash_command(name='add', guild_ids=GUILD_IDS)
+async def command_add(ctx: discord.ApplicationContext):
+    await send_add_song_modal(ctx)
 
 
-async def _load(ctx: discord.ApplicationContext, url: str, pitch: int):
+@bot.slash_command(name='load', guild_ids=GUILD_IDS)
+async def command_load(ctx: discord.ApplicationContext):
+    await send_add_song_modal(ctx)
+
+
+async def send_add_song_modal(ctx: discord.ApplicationContext):
+    await ctx.send_modal(AddSongModal(title='Add Song'))
+
+
+async def _load(interaction: discord.Interaction, url: str, pitch: int):
     async with lock:
         if len(karaqueue) >= MAX_QUEUED:
-            await ctx.respond('Queue is full! Delete some items with `/delete`', ephemeral=True)
+            await respond(interaction, 'Queue is full! Delete some items with `/delete`', ephemeral=True)
             return
-    await ctx.respond(f'Loading `{url}`...', ephemeral=True)
+        if sum(entry.uid == interaction.user.id for entry in karaqueue) >= MAX_QUEUED_PER_USER:
+            await respond(interaction, f'Each user may only have {MAX_QUEUED_PER_USER} songs in the queue!', ephemeral=True)
+            return
+    await respond(interaction, f'Loading `{url}`...', ephemeral=True)
     if 'youtu' in url or 'ytimg' in url:
         parts = re.split(YOUTUBE_PATTERN, url)
         if len(parts) < 3:
-            await ctx.respond(f'Unrecognized url!', ephemeral=True)
+            await respond(interaction, f'Unrecognized url!', ephemeral=True)
             return
         id = re.split('[^0-9a-zA-Z_\-]', parts[2])[0]
         if len(id) != 11:
-            await ctx.respond(f'Unrecognized url!', ephemeral=True)
+            await respond(interaction, f'Unrecognized url!', ephemeral=True)
             return
 
-        await ctx.edit(content=f'Loading youtube id `{id}`...')
+        await edit(interaction, content=f'Loading youtube id `{id}`...')
         yt = pytube.YouTube(f'http://youtube.com/watch?v={id}')
-        await ctx.edit(content=f'Loading youtube video `{yt.title}`...')
-        await load_youtube(ctx, yt, pitch)
+        await edit(interaction, content=f'Loading youtube video `{yt.title}`...')
+        await load_youtube(interaction, yt, pitch)
     else:
-        await ctx.respond(f'Unrecognized url!', ephemeral=True)
+        await respond(interaction, f'Unrecognized url!', ephemeral=True)
 
 
-@bot.slash_command(guild_ids=GUILD_IDS)
-async def pitch(ctx: discord.ApplicationContext, pitch: int, index: Optional[int] = 0):
+@bot.slash_command(name='pitch', guild_ids=GUILD_IDS)
+async def command_pitch(ctx: discord.ApplicationContext, pitch: int, index: Optional[int] = 0):
     async with lock:
         if index < 0 or index > len(karaqueue):
-            await ctx.respond('Invalid index!', ephemeral=True)
+            await respond(ctx, 'Invalid index!', ephemeral=True)
             return
         if index == 0:
             if current is None:
-                await ctx.respond('No song currently playing!', ephemeral=True)
+                await respond(ctx, 'No song currently playing!', ephemeral=True)
                 return
             current.set_pitch_shift_locked(pitch)
             current.onchange_locked()
@@ -248,7 +310,7 @@ async def _next(ctx: discord.ApplicationContext):
         if current != None:
             current.delete()
         if len(karaqueue) == 0:
-            await ctx.respond(content='No songs in queue! Add one with `/q`')
+            await respond(ctx, content='No songs in queue!')
             return
         current = karaqueue.pop(0)
     await _update_with_current(ctx)
@@ -259,7 +321,7 @@ async def _update_with_current(ctx: discord.ApplicationContext):
     name = entry.title
     if entry.pitch_shift != 0:
         name = f'{name} [{entry.pitch_shift:+d}]'
-    resp = await ctx.respond(content=f'Loading `{name}`...')
+    resp = await respond(ctx, content=f'Loading `{name}`...')
     if isinstance(resp, discord.Interaction):
         resp = await resp.original_response()
     async with lock:
@@ -280,20 +342,20 @@ async def _update_with_current(ctx: discord.ApplicationContext):
     await resp.edit(content=f'Now playing: `{name}`\n{entry.url()}')
 
 
-@bot.slash_command(guild_ids=GUILD_IDS)
-async def delete(ctx: discord.ApplicationContext, index: int):
+@bot.slash_command(name='delete', guild_ids=GUILD_IDS)
+async def command_delete(ctx: discord.ApplicationContext, index: int):
     await _delete(ctx, index)
 
 
-@bot.slash_command(guild_ids=GUILD_IDS)
-async def remove(ctx: discord.ApplicationContext, index: int):
+@bot.slash_command(name='remove', guild_ids=GUILD_IDS)
+async def command_remove(ctx: discord.ApplicationContext, index: int):
     await _delete(ctx, index)
 
 
 async def _delete(ctx: discord.ApplicationContext, index: int):
     async with lock:
         if index < 1 or index > len(karaqueue):
-            await ctx.respond('Invalid index!', ephemeral=True)
+            await respond(ctx, 'Invalid index!', ephemeral=True)
             return
         entry = karaqueue[index-1]
 
@@ -307,23 +369,23 @@ async def _delete(ctx: discord.ApplicationContext, index: int):
                         karaqueue[i].delete()
                         del karaqueue[i]
                         break
-                await ctx.respond(f'Successfully deleted `{entry.title}` from the queue.')
+                await respond(ctx, f'Successfully deleted `{entry.title}` from the queue.')
                 await print_queue_locked(ctx)
-            await ctx.delete()
+            await delete(ctx)
 
         @discord.ui.button(label='Cancel', style=discord.ButtonStyle.gray)
         async def cancel_callback(self, _, __):
-            await ctx.delete()
+            await delete(ctx)
 
-    await ctx.respond(f'Deleting `{entry.title}`, are you sure?', view=DeleteConfirmView())
+    await respond(ctx, f'Deleting `{entry.title}`, are you sure?', view=DeleteConfirmView(timeout=None))
 
 
-@bot.slash_command(guild_ids=GUILD_IDS)
-async def move(ctx: discord.ApplicationContext, index_from: int, index_to: int):
+@bot.slash_command(name='move', guild_ids=GUILD_IDS)
+async def command_move(ctx: discord.ApplicationContext, index_from: int, index_to: int):
     async with lock:
         if (index_from < 1 or index_from > len(karaqueue)
                 or index_to < 1 or index_to > len(karaqueue)):
-            await ctx.respond('Invalid index!', ephemeral=True)
+            await respond(ctx, 'Invalid index!', ephemeral=True)
             return
         if index_from <= index_to:
             index_to -= 1
@@ -333,7 +395,7 @@ async def move(ctx: discord.ApplicationContext, index_from: int, index_to: int):
         await print_queue_locked(ctx)
 
 
-async def load_youtube(ctx: discord.ApplicationContext, yt: pytube.YouTube, pitch_shift: int):
+async def load_youtube(interaction: discord.Interaction, yt: pytube.YouTube, pitch_shift: int):
 
     def load_streams(entry: Entry):
         audio_stream = yt.streams.filter(subtype='mp4').get_audio_only()
@@ -366,15 +428,15 @@ async def load_youtube(ctx: discord.ApplicationContext, yt: pytube.YouTube, pitc
 
     path = tempfile.mkdtemp(dir=SERVING_DIR)
     entry = Entry(title=yt.title, original_url=yt.watch_url,
-                  path=path, pitch_shift=pitch_shift, load_fn=load_streams)
+                  path=path, pitch_shift=pitch_shift, uid=interaction.user.id, load_fn=load_streams)
     async with lock:
         karaqueue.append(entry)
-        await print_queue_locked(ctx)
+        await print_queue_locked(interaction)
         entry.onchange_locked()
-    await ctx.delete()
+    await interaction.delete_original_response()
 
 
-async def print_queue_locked(ctx: discord.ApplicationContext):
+async def print_queue_locked(ctx: Union[discord.ApplicationContext, discord.Interaction]):
     global queue_msg_id
     if queue_msg_id is not None:
         try:
@@ -385,8 +447,14 @@ async def print_queue_locked(ctx: discord.ApplicationContext):
             pass
         queue_msg_id = None
 
+    class EmptyQueueView(discord.ui.View):
+
+        @discord.ui.button(label='Add Song', style=discord.ButtonStyle.green)
+        async def add_callback(self, _, interaction):
+            await interaction.response.send_modal(AddSongModal(title='Add Song'))
+
     if len(karaqueue) == 0:
-        msg = await ctx.respond(content='No songs in queue! Add one with `/q`')
+        msg = await respond(ctx, content='No songs in queue!', view=EmptyQueueView(timeout=None))
     else:
         resp = ['Up next:']
         for i, entry in enumerate(karaqueue):
@@ -395,13 +463,13 @@ async def print_queue_locked(ctx: discord.ApplicationContext):
                 row = f'{row} [{entry.pitch_shift:+d}]'
             resp.append(row)
 
-        class QueueView(discord.ui.View):
+        class QueueView(EmptyQueueView):
 
             @discord.ui.button(label='Next', style=discord.ButtonStyle.primary)
             async def next_callback(self, _, __):
                 await _next(ctx)
 
-        msg = await ctx.respond(content='\n'.join(resp), view=QueueView())
+        msg = await respond(ctx, content='\n'.join(resp), view=QueueView(timeout=None))
 
     if isinstance(msg, discord.Interaction):
         msg = await msg.original_response()
