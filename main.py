@@ -191,7 +191,7 @@ async def delete(ctx: DiscordContext, *args, **kwargs) -> Union[discord.Interact
 async def _help(ctx: discord.ApplicationContext):
     resp = [
         'Commands:',
-        '`/q url [pitch]`: queue a video from youtube. Also `/add` or `/load`.',
+        '`/q`: queue a video from youtube. Also `/add` or `/load`.',
         '`/list`: show the current playlist.',
         '`/next`: play the next entry on the playlist.',
         '`/delete index`: delete an entry from the playlist. Also `/remove`.',

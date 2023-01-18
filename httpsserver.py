@@ -1,3 +1,4 @@
+import configparser
 import datetime
 import email
 import http
@@ -8,7 +9,11 @@ import re
 import urllib.parse
 
 
-HOSTNAME = '192.168.0.185'
+cfg = configparser.ConfigParser()
+cfg.read(os.path.join(os.path.dirname(__file__), 'config.ini'))
+
+
+HOSTNAME = cfg['DEFAULT']['internal_host']
 PORT = 443
 CERT_DIR = os.path.join(os.path.dirname(__file__), 'certs')
 
