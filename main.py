@@ -28,6 +28,7 @@ BOT_TOKEN = cfg['DEFAULT']['token']
 GUILD_IDS = [cfg['DEFAULT']['guild_id']]
 MAX_QUEUED = 20
 MAX_QUEUED_PER_USER = 2
+VIDEO_LENGTH_LIMIT_MINS = 10
 HOST = cfg['DEFAULT'].get('host')
 
 
@@ -251,7 +252,10 @@ async def _load(interaction: discord.Interaction, url: str, pitch: int):
             await respond(interaction, 'Queue is full! Delete some items with `/delete`', ephemeral=True)
             return
         if sum(entry.uid == interaction.user.id for entry in karaqueue) >= MAX_QUEUED_PER_USER:
-            await respond(interaction, f'Each user may only have {MAX_QUEUED_PER_USER} songs in the queue!', ephemeral=True)
+            await respond(
+                interaction,
+                f'Each user may only have {MAX_QUEUED_PER_USER} songs in the queue!',
+                ephemeral=True)
             return
     await respond(interaction, f'Loading `{url}`...', ephemeral=True)
     if 'youtu' in url or 'ytimg' in url:
@@ -267,6 +271,12 @@ async def _load(interaction: discord.Interaction, url: str, pitch: int):
         await edit(interaction, content=f'Loading youtube id `{id}`...')
         yt = pytube.YouTube(f'http://youtube.com/watch?v={id}')
         await edit(interaction, content=f'Loading youtube video `{yt.title}`...')
+        if yt.length > VIDEO_LENGTH_LIMIT_MINS * 60:
+            await respond(
+                interaction,
+                f'Please only queue videos shorter than {VIDEO_LENGTH_LIMIT_MINS} minutes.',
+                ephemeral=True)
+            return
         await load_youtube(interaction, yt, pitch)
     else:
         await respond(interaction, f'Unrecognized url!', ephemeral=True)
