@@ -4,6 +4,7 @@ import dataclasses
 import itertools
 import logging
 import os
+import platform
 import random
 import re
 import shutil
@@ -38,9 +39,11 @@ for folder in os.listdir(SERVING_DIR):
     shutil.rmtree(os.path.join(SERVING_DIR, folder))
 
 
-def call(cmd: str) -> None:
+def call(binary:str, cmd: str) -> None:
+    if platform.system() == 'Windows':
+        binary = f'{binary}.exe'
     try:
-        subprocess.run(cmd, shell=True, check=True,
+        subprocess.run(f'{binary} {cmd}', shell=True, check=True,
                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     except subprocess.CalledProcessError as e:
         logging.error(e.stdout.decode('utf-8'))
@@ -114,13 +117,13 @@ class Entry:
             self.load_msg = f'Loading youtube video `{self.title}`...\nShifting pitch...'
             shift_path = os.path.join(self.path, 'shifted.wav')
             pitch_cents = int(self.pitch_shift * 100)
-            call(f'sox {audio_path} {shift_path} pitch {pitch_cents}')
+            call('sox', f'{audio_path} {shift_path} pitch {pitch_cents}')
             audio_path = shift_path
 
         self.load_msg = f'Loading youtube video `{self.title}`...\nCreating video...'
         video_path = os.path.join(self.path, 'video.mp4')
         output = tempfile.mktemp(dir=self.path, suffix='.mp4')
-        call(f'ffmpeg -i {audio_path} -i {video_path} '
+        call('ffmpeg', f'-i {audio_path} -i {video_path} '
              f'-c:v copy -c:a aac -b:a 160k -movflags faststart {output}')
 
         thumb_path = os.path.join(self.path, 'thumb.jpg')
@@ -431,9 +434,9 @@ async def load_youtube(interaction: discord.Interaction, yt: pytube.YouTube, pit
         yt.register_on_progress_callback(progress_func)
         audio_stream.download(output_path=entry.path, filename='audio.mp4')
         video_stream.download(output_path=entry.path, filename='video.mp4')
-        call(f'ffmpeg -i {os.path.join(entry.path, "audio.mp4")} '
+        call('ffmpeg', f'-i {os.path.join(entry.path, "audio.mp4")} '
              f'-ac 2 -f wav {os.path.join(entry.path, "audio.wav")}')
-        call(f'ffmpeg -i {os.path.join(entry.path, "video.mp4")} -vf "select=eq(n\,0)" '
+        call('ffmpeg', f'-i {os.path.join(entry.path, "video.mp4")} -vf "select=eq(n\,0)" '
              f'-q:v 3 {os.path.join(entry.path, "thumb.jpg")}')
 
     path = tempfile.mkdtemp(dir=SERVING_DIR)
