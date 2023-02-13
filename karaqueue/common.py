@@ -14,7 +14,7 @@ from karaqueue import utils
 
 
 cfg = configparser.ConfigParser()
-cfg.read(os.path.join(os.path.dirname(__file__), 'config.ini'))
+cfg.read(os.path.join(os.path.dirname(__file__), '..', 'config.ini'))
 
 
 HOST = cfg['DEFAULT'].get('host')
@@ -30,6 +30,7 @@ class Entry:
     title: str
     original_url: str
     path: str
+    always_process: bool
     load_fn: Callable[['Entry'], Optional[Tuple[str, str, str]]]
 
     uid: int = 0
@@ -90,7 +91,7 @@ class Entry:
 
     def process(self) -> None:
         """Process the video."""
-        if not self.pitch_shift:
+        if not self.always_process and not self.pitch_shift:
             return
 
         if not self.loaded:

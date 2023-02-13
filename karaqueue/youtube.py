@@ -92,4 +92,5 @@ class YoutubeDownloader(common.Downloader):
             title=yt.title,
             original_url=yt.watch_url,
             path=path,
+            always_process=False,
             load_fn=load_streams)

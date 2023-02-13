@@ -58,4 +58,5 @@ class NicoNicoDownloader(common.Downloader):
                 title=video.video.title,
                 original_url=video.url,
                 path=path,
+                always_process=True,
                 load_fn=load_streams)
