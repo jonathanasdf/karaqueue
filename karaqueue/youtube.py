@@ -1,4 +1,5 @@
 """Youtube utils."""
+import asyncio
 import os
 import re
 import shutil
@@ -22,7 +23,8 @@ class YoutubeDownloader(common.Downloader):
         return 'youtu' in url or 'ytimg' in url
 
     async def load(
-            self, interaction: discord.Interaction, url: str, path: str) -> Optional[common.Entry]:
+        self, interaction: discord.Interaction, url: str, path: str,
+    ) -> Optional[common.Entry]:
         parts = re.split(YOUTUBE_PATTERN, url)
         if len(parts) < 3:
             await utils.respond(interaction, 'Unrecognized url!', ephemeral=True)
@@ -43,7 +45,7 @@ class YoutubeDownloader(common.Downloader):
             return
         await utils.edit(interaction, content=f'Loading youtube video `{yt.title}`...')
 
-        def load_streams(entry: common.Entry) -> Optional[Tuple[str, str, str]]:
+        def load_streams(entry: common.Entry, cancel: asyncio.Event) -> Optional[Tuple[str, str, str]]:
             audio_stream = yt.streams.filter(subtype='mp4').get_audio_only()
             video_streams = yt.streams.filter(subtype='mp4', only_video=True)
             video_stream = video_streams.filter(resolution='720p').first()
@@ -56,6 +58,8 @@ class YoutubeDownloader(common.Downloader):
             total_size_mb = total_size / 1024 / 1024
 
             def progress_func(stream: pytube.Stream, _, remaining_bytes: int):
+                if cancel.is_set():
+                    raise asyncio.CancelledError()
                 downloaded = stream.filesize - remaining_bytes
                 if stream.includes_video_track:
                     downloaded += audio_stream.filesize
@@ -78,7 +82,7 @@ class YoutubeDownloader(common.Downloader):
             req = requests.get(yt.thumbnail_url, stream=True, timeout=5)
             if req.status_code == 200:
                 thumb_ext = os.path.splitext(yt.thumbnail_url)[1]
-                thumb_path = f'thumb.{thumb_ext}'
+                thumb_path = f'thumb{thumb_ext}'
                 with open(os.path.join(entry.path, thumb_path), 'wb') as thumb_file:
                     shutil.copyfileobj(req.raw, thumb_file)
             else:

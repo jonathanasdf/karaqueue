@@ -5,6 +5,7 @@ import itertools
 import logging
 import os
 import pathlib
+import signal
 import tempfile
 import typing
 from typing import Optional
@@ -226,10 +227,7 @@ async def _update_with_current(ctx: utils.DiscordContext):
     entry = karaqueue.current
     if entry is None:
         return
-    name = entry.title
-    if entry.pitch_shift != 0:
-        name = f'{name} [{entry.pitch_shift:+d}]'
-    resp = await utils.respond(ctx, content=f'Loading `{name}`...')
+    resp = await utils.respond(ctx, content=f'Loading `{entry.name}`...')
     if isinstance(resp, discord.Interaction):
         resp = await resp.original_response()
     async with karaqueue.lock:
@@ -245,9 +243,11 @@ async def _update_with_current(ctx: utils.DiscordContext):
                 await resp.edit(content=entry.load_msg)
             await asyncio.sleep(0.1)
         else:
-            await resp.edit(content=f'Loading `{name}`...\n`' + next(spinner)*4 + '`')
+            await resp.edit(content=f'Loading `{entry.name}`...\n`' + next(spinner)*4 + '`')
             await asyncio.sleep(0.1)
-    await resp.edit(content=f'Now playing: `{name}`\n{entry.url()}')
+    embed = discord.Embed(
+        title='Now playing', description=f'[`{entry.name}`]({entry.original_url})`\n{entry.url()}')
+    await resp.edit(embed=embed)
 
 
 @bot.slash_command(name='delete', guild_ids=GUILD_IDS)
@@ -332,9 +332,7 @@ async def print_queue_locked(ctx: utils.DiscordContext, karaqueue: common.Queue)
     else:
         resp = []
         for i, entry in enumerate(karaqueue):
-            row = f'{i+1}. [`{entry.title}`]({entry.original_url})'
-            if entry.pitch_shift != 0:
-                row = f'{row} [{entry.pitch_shift:+d}]'
+            row = f'{i+1}. [`{entry.name}`]({entry.original_url})'
             resp.append(row)
         embed = discord.Embed(title='Up Next', description='\n'.join(resp))
 
@@ -355,6 +353,14 @@ async def print_queue_locked(ctx: utils.DiscordContext, karaqueue: common.Queue)
 
 def main():
     """Main."""
+    cancel = asyncio.Event()
+
+    def set_cancel(*_):
+        cancel.set()
+        bot.loop.stop()
+    signal.signal(signal.SIGINT, set_cancel)
+    signal.signal(signal.SIGTERM, set_cancel)
+
     async def background_process():
         while True:
             entry_to_process = None
@@ -375,7 +381,7 @@ def main():
                     continue
             if entry_to_process.process_task is not None:
                 entry_to_process.process_task.cancel()
-            process_task = entry_to_process.get_process_task()
+            process_task = entry_to_process.get_process_task(cancel)
             entry_to_process.process_task = process_task
             await process_task
     bot.loop.create_task(background_process())

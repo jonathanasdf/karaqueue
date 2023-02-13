@@ -3,6 +3,7 @@ import asyncio
 import configparser
 import dataclasses
 import os
+import pathlib
 import random
 import shutil
 import string
@@ -31,7 +32,7 @@ class Entry:
     original_url: str
     path: str
     always_process: bool
-    load_fn: Callable[['Entry'], Optional[Tuple[str, str, str]]]
+    load_fn: Callable[['Entry', asyncio.Event], Optional[Tuple[str, str, str]]]
 
     uid: int = 0
     pitch_shift: int = 0
@@ -43,6 +44,13 @@ class Entry:
     thumb_path: str = ''
     processed: bool = False
     process_task: Optional[asyncio.Task] = None
+
+    @property
+    def name(self) -> str:
+        name = self.title
+        if self.pitch_shift != 0:
+            name = f'{name} [{self.pitch_shift:+d}]'
+        return name
 
     def set_pitch_shift(self, pitch_shift: int) -> None:
         """Set the pitch shift of the entry."""
@@ -59,13 +67,13 @@ class Entry:
         self.load_msg = ''
         self.error_msg = ''
 
-    def get_process_task(self) -> asyncio.Task:
+    def get_process_task(self, cancel: asyncio.Event) -> asyncio.Task:
         """Return a task that processes the video."""
-        async def process():
-            await asyncio.to_thread(self.process)
+        async def process(cancel: asyncio.Event):
+            await asyncio.to_thread(self.process, cancel)
             self.process_task = None
             self.processed = True
-        return asyncio.create_task(process())
+        return asyncio.create_task(process(cancel))
 
     def delete(self) -> None:
         """Delete everything associated with this entry."""
@@ -78,24 +86,32 @@ class Entry:
     def _get_server_path(self, path: str) -> str:
         """Get external base path of this entry."""
         relpath = os.path.relpath(path, SERVING_DIR)
+        relpath = pathlib.Path(relpath).as_posix()
         return f'https://{HOST}/{relpath}'
+
+    def _need_processing(self) -> bool:
+        if self.always_process:
+            return True
+        if self.pitch_shift:
+            return True
+        return False
 
     def url(self) -> str:
         """Get external video url for this entry."""
         if not self.processed:
             raise RuntimeError('task has not been processed!')
-        if not self.pitch_shift:
+        if not self._need_processing():
             return self.original_url
         return (self._get_server_path(self.path) +
                 '?' + ''.join(random.choice(string.ascii_letters) for _ in range(8)))
 
-    def process(self) -> None:
+    def process(self, cancel: asyncio.Event) -> None:
         """Process the video."""
-        if not self.always_process and not self.pitch_shift:
+        if not self._need_processing():
             return
 
         if not self.loaded:
-            res = self.load_fn(self)
+            res = self.load_fn(self, cancel)
             if res is None:
                 return
             self.video_path, self.audio_path, self.thumb_path = res
@@ -191,6 +207,8 @@ class Downloader:
         """Return true if the url can be loaded."""
         raise NotImplementedError()
 
-    async def load(self, interaction: discord.Interaction, url: str, path: str) -> Optional[Entry]:
+    async def load(
+        self, interaction: discord.Interaction, url: str, path: str,
+    ) -> Optional[Entry]:
         """Create an entry object representing the video at the url under the base path."""
         raise NotImplementedError()
