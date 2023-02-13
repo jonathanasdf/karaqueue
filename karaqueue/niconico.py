@@ -1,7 +1,6 @@
 """NicoNico utils."""
 import asyncio
 import base64
-import configparser
 import os
 from typing import Optional
 import discord
@@ -12,14 +11,9 @@ from karaqueue import nicoutils
 from karaqueue import utils
 
 
-CONFIG_FILE = os.path.join(os.path.dirname(__file__), '..', 'config.ini')
-cfg = configparser.ConfigParser()
-cfg.read(CONFIG_FILE)
-
-
-USERNAME = cfg['NICONICO']['username']
-PASSWORD = base64.b64decode(cfg['NICONICO']['password']).decode('utf-8')
-SESSION_COOKIE = cfg['NICONICO'].get('session', '')
+USERNAME = common.CONFIG['NICONICO']['username']
+PASSWORD = base64.b64decode(common.CONFIG['NICONICO']['password']).decode('utf-8')
+SESSION_COOKIE = common.CONFIG['NICONICO'].get('session', '')
 
 
 def update_session_cookie(session_cookie: str) -> None:
@@ -27,9 +21,8 @@ def update_session_cookie(session_cookie: str) -> None:
     global SESSION_COOKIE  # pylint: disable=global-statement
     if SESSION_COOKIE != session_cookie:
         SESSION_COOKIE = session_cookie
-        cfg['NICONICO']['session'] = SESSION_COOKIE
-        with open(CONFIG_FILE, 'w', encoding='utf-8') as file:
-            cfg.write(file)
+        common.CONFIG['NICONICO']['session'] = SESSION_COOKIE
+        common.update_config_file()
 
 
 class NicoNicoDownloader(common.Downloader):

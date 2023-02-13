@@ -15,15 +15,21 @@ import discord
 from karaqueue import utils
 
 
-cfg = configparser.ConfigParser()
-cfg.read(os.path.join(os.path.dirname(__file__), '..', 'config.ini'))
+_CONFIG_FILE = os.path.join(os.path.dirname(__file__), '..', 'config.ini')
+CONFIG = configparser.ConfigParser()
+CONFIG.read(_CONFIG_FILE)
 
 
-HOST = cfg['DEFAULT'].get('host')
-SERVING_DIR = cfg['DEFAULT'].get('serving_dir')
+HOST = CONFIG['DEFAULT'].get('host')
+SERVING_DIR = CONFIG['DEFAULT'].get('serving_dir')
 VIDEO_LIMIT_MINS = 10
 MAX_QUEUED = 20
 MAX_QUEUED_PER_USER = 2
+
+
+def update_config_file() -> None:
+    with open(_CONFIG_FILE, 'w', encoding='utf-8') as file:
+        CONFIG.write(file)
 
 
 @dataclasses.dataclass

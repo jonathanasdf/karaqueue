@@ -1,6 +1,5 @@
 """Karaqueue discord bot."""
 import asyncio
-import configparser
 import itertools
 import logging
 import os
@@ -31,12 +30,8 @@ def setup_logging():
 setup_logging()
 
 
-cfg = configparser.ConfigParser()
-cfg.read(os.path.join(os.path.dirname(__file__), 'config.ini'))
-
-
-BOT_TOKEN = cfg['DEFAULT']['token']
-GUILD_IDS = cfg['DEFAULT']['guild_ids'].split(',')
+BOT_TOKEN = common.CONFIG['DEFAULT']['token']
+GUILD_IDS = common.CONFIG['DEFAULT']['guild_ids'].split(',')
 
 
 os.makedirs(common.SERVING_DIR, exist_ok=True)
