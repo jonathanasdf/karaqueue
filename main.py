@@ -13,7 +13,7 @@ import discord
 from discord.ext import commands
 
 from karaqueue import common
-from karaqueue import nico
+from karaqueue import niconico
 from karaqueue import youtube
 from karaqueue import utils
 
@@ -135,7 +135,7 @@ async def send_add_song_modal(ctx: discord.ApplicationContext):
 
 _downloaders = [
     youtube.YoutubeDownloader(),
-    nico.NicoNicoDownloader(),
+    niconico.NicoNicoDownloader(),
 ]
 
 
@@ -150,7 +150,7 @@ async def _load(interaction: discord.Interaction, url: str, pitch: int):
             await utils.respond(
                 interaction, 'Queue is full! Delete some items with `/delete`', ephemeral=True)
             return
-        if sum(entry.uid == user.id for entry in karaqueue) >= common.MAX_QUEUED_PER_USER:
+        if sum(entry.user_id == user.id for entry in karaqueue) >= common.MAX_QUEUED_PER_USER:
             await utils.respond(
                 interaction,
                 f'Each user may only have {common.MAX_QUEUED_PER_USER} songs in the queue!',
@@ -162,13 +162,18 @@ async def _load(interaction: discord.Interaction, url: str, pitch: int):
     for downloader in _downloaders:
         if downloader.match(url):
             has_match = True
+            logging.info(f'Loading {url}...')
             path = tempfile.mkdtemp(dir=pathlib.PurePath(common.SERVING_DIR))
-            entry = await downloader.load(interaction, url, path)
+            try:
+                entry = await downloader.load(interaction, url, path)
+            except Exception as err:  # pylint: disable=broad-except
+                logging.info(f'Error: {err}')
+                await utils.respond(interaction, f'Error: {err}', ephemeral=True)
             break
     if not has_match:
-        await utils.respond(interaction, 'Unrecognized url!', ephemeral=True)
+        await utils.respond(interaction, f'Unrecognized url `{url}`', ephemeral=True)
     if entry is not None:
-        entry.uid = user.id
+        entry.user_id = user.id
         entry.pitch_shift = pitch
         async with karaqueue.lock:
             karaqueue.append(entry)
@@ -257,7 +262,7 @@ async def _update_with_current(ctx: utils.DiscordContext):
         else:
             await resp.edit(content=f'Loading `{entry.name}`...\n`' + next(spinner)*4 + '`')
             await asyncio.sleep(0.1)
-    logging.info('Now playing %s', entry.url())
+    logging.info(f'Now playing {entry.name} {entry.url()}')
     await resp.edit(
         content=(f'**Now playing**\n[`{entry.name}`](<{entry.original_url}>)'
                  f'[]({entry.url()})'))

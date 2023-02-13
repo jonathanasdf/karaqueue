@@ -2,11 +2,9 @@
 import asyncio
 import os
 import re
-import shutil
-from typing import Optional, Tuple
+from typing import Optional
 import discord
 import pytube
-import requests
 import StringProgressBar
 
 from karaqueue import common
@@ -87,5 +85,4 @@ class YoutubeDownloader(common.Downloader):
             title=yt.title,
             original_url=yt.watch_url,
             path=path,
-            always_process=False,
             load_fn=load_streams)

@@ -1,4 +1,6 @@
-niconico.py
+beautifulsoup4
 py-cord[speed]
 pytube
+requests
 StringProgressBar
+urllib3

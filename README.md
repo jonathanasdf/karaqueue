@@ -10,15 +10,20 @@ This project implements a Discord bot that manages a queue for a local karaoke s
 
 ```dosini
 [DEFAULT]
-token=<discord bot token>
-guild_id=<discord server id>
-internal_host=<internal ip to serve from, eg. 127.0.0.1>
-host=<public url to host machine>
+token = <discord bot token>
+guild_ids = <comma separated discord server id>
+internal_host = <internal ip to serve from, eg. 127.0.0.1>
+host = <public url to host machine>
+serving_dir = <absolute path to write videos to>
+
+[NICONICO]
+username = <email address>
+password = <base64 encoded password>
 ```
 
 ## Usage
 
-The bot writes out videos to the `_generated_videos` subdirectory of cwd, and expects the host in `config.ini` to be pointing to a webserver serving files from inside that directory.
+The bot writes out videos to `serving_dir`, and expects the host url in `config.ini` to be pointing to a webserver serving files from inside that directory.
 
 Because Discord refuses to embed video files bigger than a certain size, we exploit a workaround where we link to an html page containing OpenGraph tags for a video and for some reason Discord is happy with that.
 

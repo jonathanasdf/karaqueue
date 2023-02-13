@@ -2,6 +2,7 @@
 import asyncio
 import configparser
 import dataclasses
+import logging
 import os
 import pathlib
 import random
@@ -40,11 +41,12 @@ class Entry:
     title: str
     original_url: str
     path: str
-    always_process: bool
     load_fn: Callable[['Entry', asyncio.Event], Optional[LoadResult]]
 
-    uid: int = 0
+    user_id: int = 0
     pitch_shift: int = 0
+
+    always_process: bool = False
     load_result: Optional[LoadResult] = None
     load_msg: str = ''
     error_msg: str = ''
@@ -80,6 +82,7 @@ class Entry:
             await asyncio.to_thread(self.process, cancel)
             self.process_task = None
             self.processed = True
+            logging.info(f'Finished processing {self.original_url}')
         return asyncio.create_task(process(cancel))
 
     def delete(self) -> None:
@@ -129,7 +132,8 @@ class Entry:
                 '-loglevel quiet -select_streams v:0 -show_entries stream=width,height -of csv=p=0 '
                 f'{os.path.join(self.path, self.load_result.video_path)}',
                 return_stdout=True)
-            self.load_result.width, self.load_result.height = map(int, dimensions.split(','))
+            self.load_result.width, self.load_result.height = map(
+                int, dimensions.split(','))
 
         audio_path = os.path.join(self.path, self.load_result.audio_path)
         if self.pitch_shift:
@@ -147,7 +151,7 @@ class Entry:
 
         thumb_path = os.path.join(self.path, 'thumb.jpg')
         utils.call('ffmpeg',
-                    rf'-i {video_path} -vf "select=eq(n\,0)" -q:v 3 {thumb_path}')
+                   rf'-i {video_path} -vf "select=eq(n\,0)" -q:v 3 {thumb_path}')
 
         index_path = os.path.join(self.path, 'index.html')
         with open(index_path, 'w', encoding='utf-8') as index_file:
