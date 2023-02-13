@@ -1,3 +1,4 @@
+"""Common classes."""
 import asyncio
 import configparser
 import dataclasses
@@ -8,9 +9,8 @@ import string
 import tempfile
 from typing import Callable, Dict, List, Optional, Tuple
 import discord
-from PIL import Image
 
-import utils
+from . import utils
 
 
 cfg = configparser.ConfigParser()
@@ -18,33 +18,39 @@ cfg.read(os.path.join(os.path.dirname(__file__), 'config.ini'))
 
 
 HOST = cfg['DEFAULT'].get('host')
-SERVING_DIR = '_generated_videos'
-VIDEO_LENGTH_LIMIT_MINS = 10
+SERVING_DIR = cfg['DEFAULT'].get('serving_dir')
+VIDEO_LIMIT_MINS = 10
 MAX_QUEUED = 20
 MAX_QUEUED_PER_USER = 2
 
 
 @dataclasses.dataclass
 class Entry:
+    """An entry in the queue."""
     title: str
     original_url: str
     path: str
-    pitch_shift: int
-    load_fn: Callable[['Entry'], None]
-    uid: int
+    load_fn: Callable[['Entry'], Optional[Tuple[str, str, str]]]
 
+    uid: int = 0
+    pitch_shift: int = 0
     loaded: bool = False
     load_msg: str = ''
     error_msg: str = ''
+    video_path: str = ''
+    audio_path: str = ''
+    thumb_path: str = ''
     processed: bool = False
     process_task: Optional[asyncio.Task] = None
 
-    def set_pitch_shift_locked(self, pitch_shift: int) -> None:
+    def set_pitch_shift(self, pitch_shift: int) -> None:
+        """Set the pitch shift of the entry."""
         if self.pitch_shift == pitch_shift:
             return
         self.pitch_shift = pitch_shift
 
     def onchange_locked(self) -> None:
+        """A change that requires reprocessing the video was made."""
         if self.process_task is not None:
             self.process_task.cancel()
             self.process_task = None
@@ -53,6 +59,7 @@ class Entry:
         self.error_msg = ''
 
     def get_process_task(self) -> asyncio.Task:
+        """Return a task that processes the video."""
         async def process():
             await asyncio.to_thread(self.process)
             self.process_task = None
@@ -60,6 +67,7 @@ class Entry:
         return asyncio.create_task(process())
 
     def delete(self) -> None:
+        """Delete everything associated with this entry."""
         if self.process_task is not None:
             self.process_task.cancel()
             self.process_task = None
@@ -67,25 +75,32 @@ class Entry:
         shutil.rmtree(self.path)
 
     def _get_server_path(self, path: str) -> str:
-        relpath = os.path.relpath(path, os.path.join(os.getcwd(), SERVING_DIR))
+        """Get external base path of this entry."""
+        relpath = os.path.relpath(path, SERVING_DIR)
         return f'https://{HOST}/{relpath}'
 
     def url(self) -> str:
+        """Get external video url for this entry."""
         if not self.processed:
             raise RuntimeError('task has not been processed!')
         if not self.pitch_shift:
             return self.original_url
-        return self._get_server_path(self.path) + '?' + ''.join(random.choice(string.ascii_letters) for _ in range(8))
+        return (self._get_server_path(self.path) +
+                '?' + ''.join(random.choice(string.ascii_letters) for _ in range(8)))
 
     def process(self) -> None:
+        """Process the video."""
         if not self.pitch_shift:
             return
 
         if not self.loaded:
-            self.load_fn(self)
+            res = self.load_fn(self)
+            if res is None:
+                return
+            self.video_path, self.audio_path, self.thumb_path = res
             self.loaded = True
 
-        audio_path = os.path.join(self.path, 'audio.wav')
+        audio_path = os.path.join(self.path, self.audio_path)
         if self.pitch_shift:
             self.load_msg = f'Loading youtube video `{self.title}`...\nShifting pitch...'
             shift_path = os.path.join(self.path, 'shifted.wav')
@@ -94,24 +109,22 @@ class Entry:
             audio_path = shift_path
 
         self.load_msg = f'Loading youtube video `{self.title}`...\nCreating video...'
-        video_path = os.path.join(self.path, 'video.mp4')
+        video_path = os.path.join(self.path, self.video_path)
         output = tempfile.mktemp(dir=self.path, suffix='.mp4')
         utils.call('ffmpeg', f'-i {audio_path} -i {video_path} '
                    f'-c:v copy -c:a aac -b:a 160k -movflags faststart {output}')
 
-        thumb_path = os.path.join(self.path, 'thumb.jpg')
-        thumb = Image.open(thumb_path)
+        thumb_path = os.path.join(self.path, self.thumb_path)
 
-        with open(os.path.join(self.path, 'index.html'), 'w') as f:
-            f.write(f"""<!DOCTYPE html>
+        index_path = os.path.join(self.path, 'index.html')
+        with open(index_path, 'w', encoding='utf-8') as index_file:
+            index_file.write(f"""<!DOCTYPE html>
 <html>
     <head>
         <meta property="og:title" content="{self.title}" />
         <meta property="og:type" content="video" />
         <meta property="og:image" content="{self._get_server_path(thumb_path)}" />
         <meta property="og:video" content="{self._get_server_path(output)}" />
-        <meta property="og:video:width" content="{thumb.width}" />
-        <meta property="og:video:height" content="{thumb.height}" />
         <meta property="og:video:type" content="video/mp4" />
     </head>
 </html>
@@ -120,6 +133,7 @@ class Entry:
 
 @dataclasses.dataclass
 class Queue:
+    """A single instance of a queue for a channel."""
     guild_id: int
     channel_id: int
     msg_id: Optional[int] = None
@@ -144,20 +158,38 @@ class Queue:
             yield elem
 
     def insert(self, index, item):
+        """Insert."""
         self.queue.insert(index, item)
 
     def append(self, item):
+        """Append."""
         self.queue.append(item)
 
     def pop(self, index):
+        """Pop."""
         return self.queue.pop(index)
 
 
 karaqueue: Dict[Tuple[int, int], Queue] = {}
 
 
-def get_queue(guild_id: int, channel_id: int) -> Queue:
-    key = (guild_id, channel_id)
+def get_queue(guild_id: Optional[int], channel_id: Optional[int]) -> Queue:
+    """Get the queue corresponding to the given guild and channel."""
+    if guild_id is None or channel_id is None:
+        raise ValueError('guild_id or channel_id is None')
+    key = (int(guild_id), int(channel_id))
     if key not in karaqueue:
         karaqueue[key] = Queue(guild_id=guild_id, channel_id=channel_id)
     return karaqueue[key]
+
+
+class Downloader:
+    """A video downloader."""
+
+    def match(self, url: str) -> bool:
+        """Return true if the url can be loaded."""
+        raise NotImplementedError()
+
+    async def load(self, interaction: discord.Interaction, url: str, path: str) -> Optional[Entry]:
+        """Create an entry object representing the video at the url under the base path."""
+        raise NotImplementedError()

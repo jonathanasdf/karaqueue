@@ -1,3 +1,4 @@
+"""Simple HTTPS webserver with byte range support."""
 import configparser
 import datetime
 import email
@@ -6,6 +7,7 @@ import http.server
 import os
 import ssl
 import re
+from typing import Optional, Tuple
 import urllib.parse
 
 
@@ -35,20 +37,27 @@ def copy_byte_range(infile, outfile, start=None, stop=None, bufsize=16*1024):
 BYTE_RANGE_RE = re.compile(r'bytes=(\d+)-(\d+)?$')
 
 
-def parse_byte_range(byte_range):
+def parse_byte_range(byte_range) -> Tuple[int, Optional[int]]:
     '''Returns the two numbers in 'bytes=123-456' or throws ValueError.
     The last number or both numbers may be None.
     '''
     if byte_range.strip() == '':
-        return None, None
+        return 0, None
 
-    m = BYTE_RANGE_RE.match(byte_range)
-    if not m:
-        raise ValueError('Invalid byte range %s' % byte_range)
+    match = BYTE_RANGE_RE.match(byte_range)
+    if not match:
+        raise ValueError(f'Invalid byte range {byte_range}')
+    if len(match.groups()) == 1:
+        first = int(match.groups()[0])
+        last = None
+    elif len(match.groups()) == 2:
+        first = int(match.groups()[0])
+        last = int(match.groups()[1])
+    else:
+        raise ValueError(f'Invalid byte range {byte_range}')
 
-    first, last = [x and int(x) for x in m.groups()]
-    if last and last < first:
-        raise ValueError('Invalid byte range %s' % byte_range)
+    if last is not None and last < first:
+        raise ValueError(f'Invalid byte range {byte_range}')
     return first, last
 
 
@@ -58,6 +67,10 @@ class RangeRequestHandler(http.server.SimpleHTTPRequestHandler):
     - Override send_head to look for 'Range' and respond appropriately.
     - Override copyfile to only transmit a range when requested.
     '''
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.range = None
 
     def send_head(self):
         self.range = None
@@ -70,7 +83,6 @@ class RangeRequestHandler(http.server.SimpleHTTPRequestHandler):
 
         # Mirroring SimpleHTTPServer.py here
         path = self.translate_path(self.path)
-        f = None
         if os.path.isdir(path):
             parts = urllib.parse.urlsplit(self.path)
             if not parts.path.endswith('/'):
@@ -100,16 +112,16 @@ class RangeRequestHandler(http.server.SimpleHTTPRequestHandler):
             self.send_error(http.HTTPStatus.NOT_FOUND, 'File not found')
             return None
         try:
-            f = open(path, 'rb')
+            file = open(path, 'rb')  # pylint: disable=consider=using=with
         except OSError:
             self.send_error(http.HTTPStatus.NOT_FOUND, 'File not found')
             return None
 
         try:
-            fs = os.fstat(f.fileno())
+            file_stat = os.fstat(file.fileno())
             if self.range:
                 first, last = self.range
-                file_len = fs[6]
+                file_len = file_stat[6]
                 if first >= file_len:
                     self.send_error(416, 'Requested Range Not Satisfiable')
                     return None
@@ -122,11 +134,11 @@ class RangeRequestHandler(http.server.SimpleHTTPRequestHandler):
                     last = file_len - 1
                 response_length = last - first + 1
 
-                self.send_header('Content-Range',
-                                 'bytes %s-%s/%s' % (first, last, file_len))
+                self.send_header(
+                    'Content-Range', f'bytes {first}-{last}/{file_len}')
                 self.send_header('Content-Length', str(response_length))
                 self.send_header(
-                    'Last-Modified', self.date_time_string(fs.st_mtime))
+                    'Last-Modified', self.date_time_string(file_stat.st_mtime))  # type: ignore
                 self.send_header('Vary', 'Accept-Encoding')
                 self.end_headers()
             else:
@@ -135,7 +147,7 @@ class RangeRequestHandler(http.server.SimpleHTTPRequestHandler):
                         and 'If-None-Match' not in self.headers):
                     # compare If-Modified-Since and time of last file modification
                     try:
-                        ims = email.utils.parsedate_to_datetime(
+                        ims = email.utils.parsedate_to_datetime(  # type: ignore
                             self.headers['If-Modified-Since'])
                     except (TypeError, IndexError, OverflowError, ValueError):
                         # ignore ill-formed values
@@ -148,7 +160,7 @@ class RangeRequestHandler(http.server.SimpleHTTPRequestHandler):
                         if ims.tzinfo is datetime.timezone.utc:
                             # compare to UTC datetime of last modification
                             last_modif = datetime.datetime.fromtimestamp(
-                                fs.st_mtime, datetime.timezone.utc)
+                                file_stat.st_mtime, datetime.timezone.utc)
                             # remove microseconds, like in If-Modified-Since
                             last_modif = last_modif.replace(microsecond=0)
 
@@ -156,26 +168,27 @@ class RangeRequestHandler(http.server.SimpleHTTPRequestHandler):
                                 self.send_response(
                                     http.HTTPStatus.NOT_MODIFIED)
                                 self.end_headers()
-                                f.close()
+                                file.close()
                                 return None
 
                 self.send_response(http.HTTPStatus.OK)
                 self.send_header('Content-type', ctype)
                 self.send_header('Accept-Ranges', 'bytes')
                 self.send_header('Access-Control-Allow-Origin', '*')
-                self.send_header('Content-Length', str(fs[6]))
-                self.send_header('Last-Modified',
-                                 self.date_time_string(fs.st_mtime))
+                self.send_header('Content-Length', str(file_stat[6]))
+                self.send_header(
+                    'Last-Modified', self.date_time_string(file_stat.st_mtime))  # type: ignore
                 self.send_header('Vary', 'Accept-Encoding')
                 self.end_headers()
-            return f
+            return file
         except:
-            f.close()
+            file.close()
             raise
 
     def copyfile(self, source, outputfile):
         if not self.range:
-            return super().copyfile(source, outputfile)
+            super().copyfile(source, outputfile)
+            return
 
         # SimpleHTTPRequestHandler uses shutil.copyfileobj, which doesn't let
         # you stop the copying before the end of the file.

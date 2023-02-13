@@ -1,4 +1,4 @@
-pillow
+niconico.py
 py-cord[speed]
 pytube
 StringProgressBar
