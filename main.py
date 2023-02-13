@@ -245,9 +245,10 @@ async def _update_with_current(ctx: utils.DiscordContext):
         else:
             await resp.edit(content=f'Loading `{entry.name}`...\n`' + next(spinner)*4 + '`')
             await asyncio.sleep(0.1)
-    embed = discord.Embed(
-        title='Now playing', description=f'[`{entry.name}`]({entry.original_url})`\n{entry.url()}')
-    await resp.edit(embed=embed)
+    logging.info(f'Now playing {entry.url()}')
+    await resp.edit(
+        content=(f'**Now playing**\n[`{entry.name}`](<{entry.original_url}>)'
+                 f'[]({entry.url()})'))
 
 
 @bot.slash_command(name='delete', guild_ids=GUILD_IDS)
@@ -332,9 +333,8 @@ async def print_queue_locked(ctx: utils.DiscordContext, karaqueue: common.Queue)
     else:
         resp = []
         for i, entry in enumerate(karaqueue):
-            row = f'{i+1}. [`{entry.name}`]({entry.original_url})'
+            row = f'{i+1}. [`{entry.name}`](<{entry.original_url}>)'
             resp.append(row)
-        embed = discord.Embed(title='Up Next', description='\n'.join(resp))
 
         class QueueView(EmptyQueueView):
             """Discord view for when queue is not empty. Has a Next Song button."""
@@ -344,7 +344,8 @@ async def print_queue_locked(ctx: utils.DiscordContext, karaqueue: common.Queue)
                 """Play the next song."""
                 await _next(ctx)
 
-        msg = await utils.respond(ctx, embed=embed, view=QueueView())
+        joined = '\n'.join(resp)
+        msg = await utils.respond(ctx, f'**Up Next**\n{joined}', view=QueueView())
 
     if isinstance(msg, discord.Interaction):
         msg = await msg.original_response()
