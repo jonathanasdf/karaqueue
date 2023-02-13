@@ -120,7 +120,7 @@ class Entry:
         audio_path = os.path.join(self.path, self.audio_path)
         if self.pitch_shift:
             self.load_msg = f'Loading youtube video `{self.title}`...\nShifting pitch...'
-            shift_path = os.path.join(self.path, 'shifted.wav')
+            shift_path = os.path.join(self.path, 'shifted.mp3')
             pitch_cents = int(self.pitch_shift * 100)
             utils.call('sox', f'{audio_path} {shift_path} pitch {pitch_cents}')
             audio_path = shift_path
@@ -129,7 +129,7 @@ class Entry:
         video_path = os.path.join(self.path, self.video_path)
         output = tempfile.mktemp(dir=self.path, suffix='.mp4')
         utils.call('ffmpeg', f'-i {audio_path} -i {video_path} '
-                   f'-c:v copy -c:a aac -b:a 160k -movflags faststart {output}')
+                   f'-c:v copy -c:a copy -movflags faststart {output}')
 
         thumb_path = os.path.join(self.path, self.thumb_path)
 

@@ -1,5 +1,7 @@
 """NicoNico utils."""
 import asyncio
+import base64
+import configparser
 import logging
 import os
 import re
@@ -14,8 +16,29 @@ from karaqueue import common
 from karaqueue import utils
 
 
+cfg = configparser.ConfigParser()
+cfg.read(os.path.join(os.path.dirname(__file__), '..', 'config.ini'))
+
+
+USERNAME = cfg['NICONICO']['username']
+PASSWORD = base64.b64decode(cfg['NICONICO']['password']).decode('utf-8')
+
+
 class NicoNicoDownloader(common.Downloader):
     """NicoNico Downloader."""
+
+    def __init__(self):
+        super().__init__()
+
+        # sess = requests.session()
+        # data = {
+        #     'mail_tel': USERNAME,
+        #     'password': PASSWORD,
+        # }
+        # resp = sess.post(
+        #     'https://account.nicovideo.jp/api/v1/login', data=data, timeout=5)
+        # if resp.status_code != 200:
+        #     raise RuntimeError(f'Could not log in to nicovideo: {resp}')
 
     def match(self, url: str) -> bool:
         return 'nicovideo.jp/watch/sm' in url
@@ -56,9 +79,9 @@ class NicoNicoDownloader(common.Downloader):
                 video.download(os.path.join(entry.path, video_path),
                                load_chunk_size=1024*1024)
 
-            audio_path = 'audio.wav'
+            audio_path = 'audio.mp3'
             utils.call('ffmpeg', f'-i {os.path.join(entry.path, video_path)} '
-                       f'-ac 2 -f wav {os.path.join(entry.path, audio_path)}')
+                       f'-ac 2 -f mp3 {os.path.join(entry.path, audio_path)}')
 
             thumb_path = 'thumb.jpg'
             req = requests.get(video.video.thumbnail.largeUrl,

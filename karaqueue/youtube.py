@@ -73,11 +73,11 @@ class YoutubeDownloader(common.Downloader):
             video_path = 'video.mp4'
             video_stream.download(output_path=entry.path, filename=video_path)
 
-            audio_path = 'audio.wav'
+            audio_path = 'audio.mp3'
             audio_stream.download(output_path=entry.path, filename='audio.mp4')
             utils.call('ffmpeg',
                        f'-i {os.path.join(entry.path, "audio.mp4")} -ac 2 '
-                       f'-f wav {os.path.join(entry.path, audio_path)}')
+                       f'-f mp3 {os.path.join(entry.path, audio_path)}')
 
             req = requests.get(yt.thumbnail_url, stream=True, timeout=5)
             if req.status_code == 200:

@@ -18,7 +18,19 @@ from karaqueue import youtube
 from karaqueue import utils
 
 
-logging.basicConfig(level=logging.INFO)
+def setup_logging():
+    """Set up logging."""
+    fmt = '%(asctime)s %(levelname)-8s %(message)s'
+    datefmt = '%Y-%m-%d %H:%M:%S'
+    formatter = logging.Formatter(fmt, datefmt)
+    logging.basicConfig(level=logging.INFO, format=fmt, datefmt=datefmt)
+    file_handler = logging.FileHandler(
+        os.path.join(os.path.dirname(__file__), 'main.log'), mode='w')
+    file_handler.formatter = formatter
+    logging.getLogger().addHandler(file_handler)
+setup_logging()
+
+
 cfg = configparser.ConfigParser()
 cfg.read(os.path.join(os.path.dirname(__file__), 'config.ini'))
 
