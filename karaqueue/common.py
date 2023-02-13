@@ -26,27 +26,34 @@ MAX_QUEUED_PER_USER = 2
 
 
 @dataclasses.dataclass
+class LoadResult:
+    """Results from loading a video."""
+    video_path: str
+    audio_path: str
+    width: int = 0
+    height: int = 0
+
+
+@dataclasses.dataclass
 class Entry:
     """An entry in the queue."""
     title: str
     original_url: str
     path: str
     always_process: bool
-    load_fn: Callable[['Entry', asyncio.Event], Optional[Tuple[str, str, str]]]
+    load_fn: Callable[['Entry', asyncio.Event], Optional[LoadResult]]
 
     uid: int = 0
     pitch_shift: int = 0
-    loaded: bool = False
+    load_result: Optional[LoadResult] = None
     load_msg: str = ''
     error_msg: str = ''
-    video_path: str = ''
-    audio_path: str = ''
-    thumb_path: str = ''
     processed: bool = False
     process_task: Optional[asyncio.Task] = None
 
     @property
     def name(self) -> str:
+        """Get the formatted name of this entry."""
         name = self.title
         if self.pitch_shift != 0:
             name = f'{name} [{self.pitch_shift:+d}]'
@@ -110,14 +117,21 @@ class Entry:
         if not self._need_processing():
             return
 
-        if not self.loaded:
+        if self.load_result is None:
             res = self.load_fn(self, cancel)
             if res is None:
                 return
-            self.video_path, self.audio_path, self.thumb_path = res
-            self.loaded = True
+            self.load_result = res
 
-        audio_path = os.path.join(self.path, self.audio_path)
+        if self.load_result.width == 0 or self.load_result.height == 0:
+            dimensions = utils.call(
+                'ffprobe',
+                '-loglevel quiet -select_streams v:0 -show_entries stream=width,height -of csv=p=0 '
+                f'{os.path.join(self.path, self.load_result.video_path)}',
+                return_stdout=True)
+            self.load_result.width, self.load_result.height = map(int, dimensions.split(','))
+
+        audio_path = os.path.join(self.path, self.load_result.audio_path)
         if self.pitch_shift:
             self.load_msg = f'Loading youtube video `{self.title}`...\nShifting pitch...'
             shift_path = os.path.join(self.path, 'shifted.mp3')
@@ -126,12 +140,14 @@ class Entry:
             audio_path = shift_path
 
         self.load_msg = f'Loading youtube video `{self.title}`...\nCreating video...'
-        video_path = os.path.join(self.path, self.video_path)
+        video_path = os.path.join(self.path, self.load_result.video_path)
         output = tempfile.mktemp(dir=self.path, suffix='.mp4')
         utils.call('ffmpeg', f'-i {audio_path} -i {video_path} '
                    f'-c:v copy -c:a copy -movflags faststart {output}')
 
-        thumb_path = os.path.join(self.path, self.thumb_path)
+        thumb_path = os.path.join(self.path, 'thumb.jpg')
+        utils.call('ffmpeg',
+                    rf'-i {video_path} -vf "select=eq(n\,0)" -q:v 3 {thumb_path}')
 
         index_path = os.path.join(self.path, 'index.html')
         with open(index_path, 'w', encoding='utf-8') as index_file:
@@ -142,6 +158,8 @@ class Entry:
         <meta property="og:type" content="video" />
         <meta property="og:image" content="{self._get_server_path(thumb_path)}" />
         <meta property="og:video" content="{self._get_server_path(output)}" />
+        <meta property="og:video:width" content="{self.load_result.width}" />
+        <meta property="og:video:height" content="{self.load_result.height}" />
         <meta property="og:video:type" content="video/mp4" />
     </head>
 </html>

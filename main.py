@@ -25,7 +25,7 @@ def setup_logging():
     formatter = logging.Formatter(fmt, datefmt)
     logging.basicConfig(level=logging.INFO, format=fmt, datefmt=datefmt)
     file_handler = logging.FileHandler(
-        os.path.join(os.path.dirname(__file__), 'main.log'), mode='w')
+        os.path.join(os.path.dirname(__file__), 'main.log'))
     file_handler.formatter = formatter
     logging.getLogger().addHandler(file_handler)
 setup_logging()
@@ -257,7 +257,7 @@ async def _update_with_current(ctx: utils.DiscordContext):
         else:
             await resp.edit(content=f'Loading `{entry.name}`...\n`' + next(spinner)*4 + '`')
             await asyncio.sleep(0.1)
-    logging.info(f'Now playing {entry.url()}')
+    logging.info('Now playing %s', entry.url())
     await resp.edit(
         content=(f'**Now playing**\n[`{entry.name}`](<{entry.original_url}>)'
                  f'[]({entry.url()})'))

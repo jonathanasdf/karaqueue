@@ -6,20 +6,31 @@ from typing import Union
 import discord
 
 
-def call(binary: str, cmd: str) -> None:
+def call(binary: str, cmd: str, return_stdout: bool = False) -> str:
     """Call a local binary with a command."""
     if platform.system() == 'Windows':
         binary = f'{binary}.exe'
+    if return_stdout:
+        try:
+            result = subprocess.run(f'{binary} {cmd}', shell=True, check=True,
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            return result.stdout.decode('utf-8')
+        except subprocess.CalledProcessError as err:
+            logging.error(err.stdout.decode('utf-8'))
+            logging.error(err.stderr.decode('utf-8'))
+            raise
     try:
         subprocess.run(f'{binary} {cmd}', shell=True, check=True,
                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        return ''
     except subprocess.CalledProcessError as err:
         logging.error(err.stdout.decode('utf-8'))
         raise
 
 
 DiscordContext = Union[discord.ApplicationContext, discord.Interaction]
-DiscordMessage = Union[discord.Interaction, discord.InteractionMessage, discord.WebhookMessage]
+DiscordMessage = Union[discord.Interaction,
+                       discord.InteractionMessage, discord.WebhookMessage]
 
 
 async def respond(ctx: DiscordContext, *args, **kwargs) -> DiscordMessage:

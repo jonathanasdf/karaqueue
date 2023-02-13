@@ -45,7 +45,7 @@ class YoutubeDownloader(common.Downloader):
             return
         await utils.edit(interaction, content=f'Loading youtube video `{yt.title}`...')
 
-        def load_streams(entry: common.Entry, cancel: asyncio.Event) -> Optional[Tuple[str, str, str]]:
+        def load_streams(entry: common.Entry, cancel: asyncio.Event) -> Optional[common.LoadResult]:
             audio_stream = yt.streams.filter(subtype='mp4').get_audio_only()
             video_streams = yt.streams.filter(subtype='mp4', only_video=True)
             video_stream = video_streams.filter(resolution='720p').first()
@@ -79,18 +79,9 @@ class YoutubeDownloader(common.Downloader):
                        f'-i {os.path.join(entry.path, "audio.mp4")} -ac 2 '
                        f'-f mp3 {os.path.join(entry.path, audio_path)}')
 
-            req = requests.get(yt.thumbnail_url, stream=True, timeout=5)
-            if req.status_code == 200:
-                thumb_ext = os.path.splitext(yt.thumbnail_url)[1]
-                thumb_path = f'thumb{thumb_ext}'
-                with open(os.path.join(entry.path, thumb_path), 'wb') as thumb_file:
-                    shutil.copyfileobj(req.raw, thumb_file)
-            else:
-                thumb_path = 'thumb.jpg'
-                utils.call('ffmpeg',
-                           f'-i {os.path.join(entry.path, video_path)} '
-                           f'-vf "select=eq(n,0)" -q:v 3 {os.path.join(entry.path, thumb_path)}')
-            return video_path, audio_path, thumb_path
+            return common.LoadResult(
+                video_path=video_path,
+                audio_path=audio_path)
 
         return common.Entry(
             title=yt.title,

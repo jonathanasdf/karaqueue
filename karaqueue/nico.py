@@ -2,14 +2,11 @@
 import asyncio
 import base64
 import configparser
-import logging
 import os
 import re
-import shutil
-from typing import Optional, Tuple
+from typing import Optional
 import discord
 from niconico.niconico import NicoNico
-import requests
 import StringProgressBar
 
 from karaqueue import common
@@ -56,7 +53,7 @@ class NicoNicoDownloader(common.Downloader):
         await utils.edit(
             interaction, content=f'Loading niconico video `{video.video.title}`...')
 
-        def load_streams(entry: common.Entry, cancel: asyncio.Event) -> Optional[Tuple[str, str, str]]:
+        def load_streams(entry: common.Entry, cancel: asyncio.Event) -> Optional[common.LoadResult]:
 
             def progress_func(log: str):
                 if cancel.is_set():
@@ -83,18 +80,9 @@ class NicoNicoDownloader(common.Downloader):
             utils.call('ffmpeg', f'-i {os.path.join(entry.path, video_path)} '
                        f'-ac 2 -f mp3 {os.path.join(entry.path, audio_path)}')
 
-            thumb_path = 'thumb.jpg'
-            req = requests.get(video.video.thumbnail.largeUrl,
-                               stream=True, timeout=5)
-            if req.status_code == 200:
-                with open(os.path.join(entry.path, thumb_path), 'wb') as thumb_file:
-                    shutil.copyfileobj(req.raw, thumb_file)
-            else:
-                utils.call('ffmpeg',
-                           f'-i {os.path.join(entry.path, video_path)} '
-                           f'-vf "select=eq(n,0)" -q:v 3 '
-                           f'{os.path.join(entry.path, thumb_path)}')
-            return video_path, audio_path, thumb_path
+            return common.LoadResult(
+                video_path=video_path,
+                audio_path=audio_path)
 
         return common.Entry(
             title=video.video.title,
