@@ -112,7 +112,7 @@ class RangeRequestHandler(http.server.SimpleHTTPRequestHandler):
             self.send_error(http.HTTPStatus.NOT_FOUND, 'File not found')
             return None
         try:
-            file = open(path, 'rb')  # pylint: disable=consider=using=with
+            file = open(path, 'rb')  # pylint: disable=consider-using-with
         except OSError:
             self.send_error(http.HTTPStatus.NOT_FOUND, 'File not found')
             return None

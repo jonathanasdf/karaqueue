@@ -4,16 +4,17 @@ import configparser
 import itertools
 import logging
 import os
+import pathlib
 import tempfile
 import typing
 from typing import Optional
 import discord
 from discord.ext import commands
 
-from . import common
-from . import nico
-from . import youtube
-from . import utils
+from karaqueue import common
+from karaqueue import nico
+from karaqueue import youtube
+from karaqueue import utils
 
 
 logging.basicConfig(level=logging.INFO)
@@ -148,7 +149,7 @@ async def _load(interaction: discord.Interaction, url: str, pitch: int):
     for downloader in _downloaders:
         if downloader.match(url):
             has_match = True
-            path = tempfile.mkdtemp(dir=common.SERVING_DIR)
+            path = tempfile.mkdtemp(dir=pathlib.PurePath(common.SERVING_DIR))
             entry = await downloader.load(interaction, url, path)
             break
     if not has_match:

@@ -8,8 +8,8 @@ import pytube
 import requests
 import StringProgressBar
 
-from . import common
-from . import utils
+from karaqueue import common
+from karaqueue import utils
 
 
 YOUTUBE_PATTERN = re.compile(r'(vi/|v=|/v/|youtu.be/|/embed/)')

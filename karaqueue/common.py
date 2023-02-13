@@ -10,7 +10,7 @@ import tempfile
 from typing import Callable, Dict, List, Optional, Tuple
 import discord
 
-from . import utils
+from karaqueue import utils
 
 
 cfg = configparser.ConfigParser()

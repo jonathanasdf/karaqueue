@@ -6,8 +6,8 @@ import discord
 from niconico.niconico import NicoNico
 import requests
 
-from . import common
-from . import utils
+from karaqueue import common
+from karaqueue import utils
 
 
 class NicoNicoDownloader(common.Downloader):
