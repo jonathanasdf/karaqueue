@@ -1,3 +1,4 @@
+absl-py
 beautifulsoup4
 py-cord[speed]
 pytube

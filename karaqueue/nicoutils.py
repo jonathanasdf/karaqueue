@@ -5,6 +5,7 @@ import threading
 import time
 from typing import Any, Callable, Tuple
 import xml.dom.minidom
+from absl import flags
 from bs4 import BeautifulSoup
 import requests
 import requests.adapters
@@ -16,6 +17,9 @@ try:
     _HAS_TKINTER = True
 except ImportError:
     _HAS_TKINTER = False
+
+
+FLAGS = flags.FLAGS
 
 
 __license__ = 'MIT'
@@ -77,7 +81,7 @@ def login(username: str, password: str, session_cookie: str) -> Tuple[requests.S
 
         otp_requests_made = 0
         while otp_requests_made < 10 and not session.cookies.get_dict().get('user_session', ''):
-            if _HAS_TKINTER:
+            if FLAGS.gui and _HAS_TKINTER:
                 otp_code = (simpledialog.askstring(
                     title='NicoNico OTP', prompt='NicoNico OTP:') or '')
             else:

@@ -8,6 +8,8 @@ import signal
 import tempfile
 import typing
 from typing import Optional
+from absl import app
+from absl import flags
 import discord
 from discord.ext import commands
 
@@ -15,6 +17,11 @@ from karaqueue import common
 from karaqueue import niconico
 from karaqueue import youtube
 from karaqueue import utils
+
+
+FLAGS = flags.FLAGS
+
+flags.DEFINE_bool('gui', False, 'If windows gui is available.')
 
 
 def setup_logging():
@@ -364,7 +371,7 @@ async def print_queue_locked(ctx: utils.DiscordContext, karaqueue: common.Queue)
     karaqueue.msg_id = msg.id
 
 
-def main():
+def main(_):
     """Main."""
     cancel = asyncio.Event()
 
@@ -403,4 +410,4 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    app.run(main)
