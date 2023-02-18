@@ -14,9 +14,10 @@ import discord
 from discord.ext import commands
 
 from karaqueue import common
-from karaqueue import niconico
-from karaqueue import youtube
 from karaqueue import utils
+from karaqueue.downloaders import bilibili
+from karaqueue.downloaders import niconico
+from karaqueue.downloaders import youtube
 
 
 FLAGS = flags.FLAGS
@@ -26,6 +27,8 @@ flags.DEFINE_bool('gui', False, 'If windows gui is available.')
 
 def setup_logging():
     """Set up logging."""
+    # Clear handlers from imports.
+    logging.getLogger().handlers = []
     fmt = '%(asctime)s %(levelname)-8s %(message)s'
     datefmt = '%Y-%m-%d %H:%M:%S'
     formatter = logging.Formatter(fmt, datefmt)
@@ -138,6 +141,7 @@ async def send_add_song_modal(ctx: discord.ApplicationContext):
 _downloaders = [
     youtube.YoutubeDownloader(),
     niconico.NicoNicoDownloader(),
+    bilibili.BilibiliDownloader(),
 ]
 
 
@@ -146,6 +150,7 @@ async def _load(interaction: discord.Interaction, url: str, pitch: int):
     user = interaction.user
     if user is None:
         return
+    url = url.strip()
     karaqueue = common.get_queue(interaction.guild_id, interaction.channel_id)
     async with karaqueue.lock:
         if len(karaqueue) >= common.MAX_QUEUED:

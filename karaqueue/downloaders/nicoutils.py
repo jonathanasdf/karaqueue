@@ -142,7 +142,8 @@ def download_video(
     progress = [0] * threads
 
     def download_video_part(i: int, start: int, end: int):
-        dl_stream = session.get(download_url, headers={'Range': f'bytes={start}-{end-1}'}, stream=True)
+        dl_stream = session.get(
+            download_url, headers={'Range': f'bytes={start}-{end-1}'}, stream=True)
         dl_stream.raise_for_status()
         stream_iterator = dl_stream.iter_content(BLOCK_SIZE)
 

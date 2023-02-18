@@ -1,14 +1,15 @@
-"""NicoNico utils."""
+"""NicoNico downloader."""
 import asyncio
 import base64
+import functools
 import os
 from typing import Optional
 import discord
 import StringProgressBar
 
 from karaqueue import common
-from karaqueue import nicoutils
 from karaqueue import utils
+from karaqueue.downloaders import nicoutils
 
 
 USERNAME = common.CONFIG['NICONICO']['username']
@@ -68,8 +69,8 @@ class NicoNicoDownloader(common.Downloader):
                 entry.path, video_path), progress_func)
 
             audio_path = 'audio.mp3'
-            utils.call('ffmpeg', f'-i {os.path.join(entry.path, video_path)} '
-                       f'-ac 2 -f mp3 {os.path.join(entry.path, audio_path)}')
+            utils.call('ffmpeg', f'-i "{os.path.join(entry.path, video_path)}" '
+                       f'-ac 2 -f mp3 "{os.path.join(entry.path, audio_path)}"')
 
             return common.LoadResult(
                 video_path=video_path,
@@ -80,4 +81,4 @@ class NicoNicoDownloader(common.Downloader):
             original_url=url,
             path=path,
             always_process=True,
-            load_fn=load_streams)
+            load_fn=functools.partial(asyncio.to_thread, load_streams))

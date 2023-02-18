@@ -1,5 +1,6 @@
 """Youtube utils."""
 import asyncio
+import functools
 import os
 import re
 from typing import Optional
@@ -82,8 +83,8 @@ class YoutubeDownloader(common.Downloader):
             audio_path = 'audio.mp3'
             audio_stream.download(output_path=entry.path, filename='audio.mp4')
             utils.call('ffmpeg',
-                       f'-i {os.path.join(entry.path, "audio.mp4")} -ac 2 '
-                       f'-f mp3 {os.path.join(entry.path, audio_path)}')
+                       f'-i "{os.path.join(entry.path, "audio.mp4")}" -ac 2 '
+                       f'-f mp3 "{os.path.join(entry.path, audio_path)}"')
 
             return common.LoadResult(
                 video_path=video_path,
@@ -94,4 +95,4 @@ class YoutubeDownloader(common.Downloader):
             original_url=yt.watch_url,
             always_process=True,  # Some youtube videos don't allow embedding.
             path=path,
-            load_fn=load_streams)
+            load_fn=functools.partial(asyncio.to_thread, load_streams))

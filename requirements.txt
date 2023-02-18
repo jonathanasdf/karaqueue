@@ -1,5 +1,6 @@
 absl-py
 beautifulsoup4
+bilix
 py-cord[speed]
 pytube
 requests

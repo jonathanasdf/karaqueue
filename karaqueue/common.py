@@ -6,10 +6,9 @@ import logging
 import os
 import pathlib
 import random
-import shutil
 import string
 import tempfile
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Awaitable, Callable, Dict, List, Optional, Tuple
 import discord
 
 from karaqueue import utils
@@ -28,6 +27,7 @@ MAX_QUEUED_PER_USER = 2
 
 
 def update_config_file() -> None:
+    """Update config.ini."""
     with open(_CONFIG_FILE, 'w', encoding='utf-8') as file:
         CONFIG.write(file)
 
@@ -47,7 +47,7 @@ class Entry:
     title: str
     original_url: str
     path: str
-    load_fn: Callable[['Entry', asyncio.Event], Optional[LoadResult]]
+    load_fn: Callable[['Entry', asyncio.Event], Awaitable[Optional[LoadResult]]]
 
     user_id: int = 0
     pitch_shift: int = 0
@@ -85,7 +85,7 @@ class Entry:
     def get_process_task(self, cancel: asyncio.Event) -> asyncio.Task:
         """Return a task that processes the video."""
         async def process(cancel: asyncio.Event):
-            await asyncio.to_thread(self.process, cancel)
+            await self.process(cancel)
             self.process_task = None
             self.processed = True
             logging.info(f'Finished processing {self.original_url}')
@@ -97,7 +97,6 @@ class Entry:
             self.process_task.cancel()
             self.process_task = None
         self.processed = False
-        shutil.rmtree(self.path)
 
     def _get_server_path(self, path: str) -> str:
         """Get external base path of this entry."""
@@ -121,22 +120,27 @@ class Entry:
         return (self._get_server_path(self.path) +
                 '?' + ''.join(random.choice(string.ascii_letters) for _ in range(8)))
 
-    def process(self, cancel: asyncio.Event) -> None:
+    async def process(self, cancel: asyncio.Event) -> None:
         """Process the video."""
         if not self._need_processing():
             return
 
         if self.load_result is None:
-            res = self.load_fn(self, cancel)
+            res = await self.load_fn(self, cancel)
             if res is None:
                 return
             self.load_result = res
 
+        await asyncio.to_thread(self._process_load_result)
+
+    def _process_load_result(self) -> None:
+        if self.load_result is None:
+            return
         if self.load_result.width == 0 or self.load_result.height == 0:
             dimensions = utils.call(
                 'ffprobe',
                 '-loglevel quiet -select_streams v:0 -show_entries stream=width,height -of csv=p=0 '
-                f'{os.path.join(self.path, self.load_result.video_path)}',
+                f'"{os.path.join(self.path, self.load_result.video_path)}"',
                 return_stdout=True)
             self.load_result.width, self.load_result.height = map(
                 int, dimensions.split(','))
@@ -146,18 +150,18 @@ class Entry:
             self.load_msg = f'Loading youtube video `{self.title}`...\nShifting pitch...'
             shift_path = os.path.join(self.path, 'shifted.mp3')
             pitch_cents = int(self.pitch_shift * 100)
-            utils.call('sox', f'{audio_path} {shift_path} pitch {pitch_cents}')
+            utils.call('sox', f'"{audio_path}" "{shift_path}" pitch {pitch_cents}')
             audio_path = shift_path
 
         self.load_msg = f'Loading youtube video `{self.title}`...\nCreating video...'
         video_path = os.path.join(self.path, self.load_result.video_path)
         output = tempfile.mktemp(dir=self.path, suffix='.mp4')
-        utils.call('ffmpeg', f'-i {audio_path} -i {video_path} '
+        utils.call('ffmpeg', f'-i "{audio_path}" -i "{video_path}" '
                    f'-c:v copy -c:a copy -movflags faststart {output}')
 
         thumb_path = os.path.join(self.path, 'thumb.jpg')
         utils.call('ffmpeg',
-                   rf'-i {video_path} -vf "select=eq(n\,0)" -q:v 3 {thumb_path}')
+                   rf'-i "{video_path}" -vf "select=eq(n\,0)" -q:v 3 "{thumb_path}"')
 
         index_path = os.path.join(self.path, 'index.html')
         with open(index_path, 'w', encoding='utf-8') as index_file:
