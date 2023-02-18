@@ -5,6 +5,7 @@ import re
 from typing import Optional
 import discord
 import pytube
+import pytube.exceptions
 import StringProgressBar
 
 from karaqueue import common
@@ -33,8 +34,15 @@ class YoutubeDownloader(common.Downloader):
             return
 
         await utils.edit(interaction, content=f'Loading youtube id `{vid}`...')
-        yt = pytube.YouTube(  # pylint: disable=invalid-name
-            f'http://youtube.com/watch?v={vid}')
+        try:
+            yt = pytube.YouTube(  # pylint: disable=invalid-name
+                f'http://youtube.com/watch?v={vid}')
+            if yt.age_restricted:
+                yt.bypass_age_gate()
+            yt.check_availability()
+        except pytube.exceptions.PytubeError as err:
+            await utils.respond(interaction, err, ephemeral=True)
+            return
         if yt.length > common.VIDEO_LIMIT_MINS * 60:
             await utils.respond(
                 interaction,
@@ -84,5 +92,6 @@ class YoutubeDownloader(common.Downloader):
         return common.Entry(
             title=yt.title,
             original_url=yt.watch_url,
+            always_process=True,  # Some youtube videos don't allow embedding.
             path=path,
             load_fn=load_streams)
