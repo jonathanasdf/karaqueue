@@ -2,6 +2,7 @@
 import asyncio
 import configparser
 import dataclasses
+import datetime
 import logging
 import os
 import pathlib
@@ -47,10 +48,13 @@ class Entry:
     title: str
     original_url: str
     path: str
-    load_fn: Callable[['Entry', asyncio.Event], Awaitable[Optional[LoadResult]]]
+    load_fn: Callable[['Entry', asyncio.Event],
+                      Awaitable[Optional[LoadResult]]]
 
+    queue: Optional['Queue'] = None
     user_id: int = 0
     pitch_shift: int = 0
+    offset_ms: int = 0
 
     always_process: bool = False
     load_result: Optional[LoadResult] = None
@@ -66,12 +70,6 @@ class Entry:
         if self.pitch_shift != 0:
             name = f'{name} [{self.pitch_shift:+d}]'
         return name
-
-    def set_pitch_shift(self, pitch_shift: int) -> None:
-        """Set the pitch shift of the entry."""
-        if self.pitch_shift == pitch_shift:
-            return
-        self.pitch_shift = pitch_shift
 
     def onchange_locked(self) -> None:
         """A change that requires reprocessing the video was made."""
@@ -105,9 +103,13 @@ class Entry:
         return f'https://{HOST}/{relpath}'
 
     def _need_processing(self) -> bool:
+        if self.queue is None:
+            raise ValueError('Queue reference not set!')
         if self.always_process:
             return True
         if self.pitch_shift:
+            return True
+        if self.offset_ms + self.queue.global_offset_ms != 0:
             return True
         return False
 
@@ -131,11 +133,6 @@ class Entry:
                 return
             self.load_result = res
 
-        await asyncio.to_thread(self._process_load_result)
-
-    def _process_load_result(self) -> None:
-        if self.load_result is None:
-            return
         if self.load_result.width == 0 or self.load_result.height == 0:
             dimensions = utils.call(
                 'ffprobe',
@@ -145,30 +142,52 @@ class Entry:
             self.load_result.width, self.load_result.height = map(
                 int, dimensions.split(','))
 
+        await asyncio.to_thread(self._process_load_result)
+
+    def _process_load_result(self) -> None:
+        if self.queue is None:
+            raise ValueError('Queue reference not set!')
+        if self.load_result is None:
+            return
         audio_path = os.path.join(self.path, self.load_result.audio_path)
         if self.pitch_shift:
-            self.load_msg = f'Loading youtube video `{self.title}`...\nShifting pitch...'
+            self.load_msg = f'Loading video `{self.title}`...\nShifting pitch...'
             shift_path = os.path.join(self.path, 'shifted.mp3')
             pitch_cents = int(self.pitch_shift * 100)
-            utils.call('sox', f'"{audio_path}" "{shift_path}" pitch {pitch_cents}')
+            utils.call(
+                'sox', f'"{audio_path}" "{shift_path}" pitch {pitch_cents}')
             audio_path = shift_path
 
-        self.load_msg = f'Loading youtube video `{self.title}`...\nCreating video...'
         video_path = os.path.join(self.path, self.load_result.video_path)
+
+        offset_ms = self.offset_ms + self.queue.global_offset_ms
+        if offset_ms == 0:
+            input_flags = (f'-i "{video_path}" -i "{audio_path}" -c:v copy -c:a copy '
+                           f'-map 0:v:0 -map 1:a:0')
+        elif offset_ms > 0:
+            input_flags = (f'-i "{video_path}" -i "{audio_path}" -c:v copy -c:a mp3 '
+                           f'-af "adelay={offset_ms}|{offset_ms}" -map 0:v:0 -map 1:a:0')
+        else:
+            delay_str = datetime.timedelta(milliseconds=-offset_ms)
+            input_flags = (f'-i "{audio_path}" -itsoffset {delay_str} -i "{video_path}" '
+                           f'-c:a copy -c:v copy -map 1:v:0 -map 0:a:0')
+
+        self.load_msg = f'Loading video `{self.title}`...\nCreating video...'
         output = tempfile.mktemp(dir=self.path, suffix='.mp4')
-        utils.call('ffmpeg', f'-i "{audio_path}" -i "{video_path}" '
-                   f'-c:v copy -c:a copy -movflags faststart {output}')
+        utils.call(
+            'ffmpeg', f'{input_flags} -movflags faststart {output}')
 
         thumb_path = os.path.join(self.path, 'thumb.jpg')
-        utils.call('ffmpeg',
-                   rf'-i "{video_path}" -vf "select=eq(n\,0)" -q:v 3 "{thumb_path}"')
+        if not os.path.exists(thumb_path):
+            utils.call('ffmpeg',
+                       rf'-i "{video_path}" -vf "select=eq(n\,0)" -q:v 3 "{thumb_path}"')
 
         index_path = os.path.join(self.path, 'index.html')
         with open(index_path, 'w', encoding='utf-8') as index_file:
             index_file.write(f"""<!DOCTYPE html>
 <html>
     <head>
-        <meta property="og:title" content="{self.title}" />
+        <meta property="og:title" content="{self.name}" />
         <meta property="og:type" content="video" />
         <meta property="og:image" content="{self._get_server_path(thumb_path)}" />
         <meta property="og:video" content="{self._get_server_path(output)}" />
@@ -189,6 +208,8 @@ class Queue:
     current: Optional[Entry] = None
     queue: List[Entry] = dataclasses.field(default_factory=list)
     lock = asyncio.Lock()
+
+    global_offset_ms: int = 0
 
     def __len__(self):
         return len(self.queue)

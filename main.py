@@ -37,6 +37,8 @@ def setup_logging():
         os.path.join(os.path.dirname(__file__), 'main.log'))
     file_handler.formatter = formatter
     logging.getLogger().addHandler(file_handler)
+
+
 setup_logging()
 
 
@@ -59,13 +61,18 @@ class AddSongModal(discord.ui.Modal):
         self.add_item(discord.ui.InputText(label="URL"))  # type: ignore
         self.add_item(discord.ui.InputText(
             label="Pitch Shift (optional)", required=False))  # type: ignore
+        self.add_item(discord.ui.InputText(
+            label="Audio Delay Milliseconds (optional)", required=False))  # type: ignore
 
     async def callback(self, interaction: discord.Interaction):
         url = str(self.children[0].value)
         pitch_shift = 0
         if self.children[1].value:
             pitch_shift = int(self.children[1].value)
-        await _load(interaction, url, pitch_shift)
+        offset_ms = 0
+        if self.children[2].value:
+            offset_ms = int(self.children[2].value)
+        await _load(interaction, url, pitch_shift, offset_ms)
 
 
 class EmptyQueueView(discord.ui.View):
@@ -145,7 +152,7 @@ _downloaders = [
 ]
 
 
-async def _load(interaction: discord.Interaction, url: str, pitch: int):
+async def _load(interaction: discord.Interaction, url: str, pitch: int, offset_ms: int):
     """Load a song from a url."""
     user = interaction.user
     if user is None:
@@ -180,8 +187,10 @@ async def _load(interaction: discord.Interaction, url: str, pitch: int):
     if not has_match:
         await utils.respond(interaction, f'Unrecognized url `{url}`', ephemeral=True)
     if entry is not None:
+        entry.queue = karaqueue
         entry.user_id = user.id
         entry.pitch_shift = pitch
+        entry.offset_ms = offset_ms
         async with karaqueue.lock:
             karaqueue.append(entry)
             await print_queue_locked(interaction, karaqueue)
@@ -195,6 +204,7 @@ async def _load(interaction: discord.Interaction, url: str, pitch: int):
 async def command_pitch(ctx: discord.ApplicationContext, pitch: int, index: int = 0):
     """Change the pitch of a song."""
     karaqueue = common.get_queue(ctx.guild_id, ctx.channel_id)
+    current_updated = False
     async with karaqueue.lock:
         if index < 0 or index > len(karaqueue):
             await utils.respond(ctx, 'Invalid index!', ephemeral=True)
@@ -203,18 +213,67 @@ async def command_pitch(ctx: discord.ApplicationContext, pitch: int, index: int 
             if karaqueue.current is None:
                 await utils.respond(ctx, 'No song currently playing!', ephemeral=True)
                 return
-            karaqueue.current.set_pitch_shift(pitch)
-            karaqueue.current.onchange_locked()
-            async with new_process_task:
-                new_process_task.notify()
+            if karaqueue.current.pitch_shift != pitch:
+                karaqueue.current.pitch_shift = pitch
+                karaqueue.current.onchange_locked()
+                async with new_process_task:
+                    new_process_task.notify()
+                current_updated = True
         elif index <= len(karaqueue):
             entry = karaqueue[index-1]
-            entry.set_pitch_shift(pitch)
-            await print_queue_locked(ctx, karaqueue)
-            entry.onchange_locked()
-            async with new_process_task:
-                new_process_task.notify()
-    if index == 0:
+            if entry.pitch_shift != pitch:
+                entry.pitch_shift = pitch
+                await print_queue_locked(ctx, karaqueue)
+                entry.onchange_locked()
+                async with new_process_task:
+                    new_process_task.notify()
+    if current_updated:
+        await _update_with_current(ctx)
+
+
+@bot.slash_command(name='offset', guild_ids=GUILD_IDS)
+async def command_offset(
+    ctx: discord.ApplicationContext, offset_ms: int, index: Optional[int] = None,
+):
+    """Change the offset of a song."""
+    karaqueue = common.get_queue(ctx.guild_id, ctx.channel_id)
+    current_updated = False
+    async with karaqueue.lock:
+        if index is None:
+            if karaqueue.global_offset_ms != offset_ms:
+                karaqueue.global_offset_ms = offset_ms
+                if karaqueue.current is not None:
+                    karaqueue.current.onchange_locked()
+                    current_updated = True
+                for entry in karaqueue:
+                    entry.onchange_locked()
+                async with new_process_task:
+                    new_process_task.notify()
+            await utils.respond(ctx, f'Updated global offset to {offset_ms}', ephemeral=True)
+        else:
+            if index < 0 or index > len(karaqueue):
+                await utils.respond(ctx, 'Invalid index!', ephemeral=True)
+                return
+            if index == 0:
+                if karaqueue.current is None:
+                    await utils.respond(ctx, 'No song currently playing!', ephemeral=True)
+                    return
+                if karaqueue.current.offset_ms != offset_ms:
+                    karaqueue.current.offset_ms = offset_ms
+                    karaqueue.current.onchange_locked()
+                    async with new_process_task:
+                        new_process_task.notify()
+                    current_updated = True
+            elif index <= len(karaqueue):
+                entry = karaqueue[index-1]
+                if entry.offset_ms != offset_ms:
+                    entry.offset_ms = offset_ms
+                    entry.onchange_locked()
+                    async with new_process_task:
+                        new_process_task.notify()
+                await utils.respond(
+                    ctx, f'Updated offset for {entry.title} to {offset_ms}', ephemeral=True)
+    if current_updated:
         await _update_with_current(ctx)
 
 
