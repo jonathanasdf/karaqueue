@@ -295,8 +295,6 @@ async def _next(ctx: utils.DiscordContext):
     """Play the next song."""
     karaqueue = common.get_queue(ctx.guild_id, ctx.channel_id)
     async with karaqueue.lock:
-        if karaqueue.current is not None:
-            karaqueue.current.delete()
         if len(karaqueue) == 0:
             await utils.respond(ctx, content='No songs in queue!')
             return
