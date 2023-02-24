@@ -17,6 +17,7 @@ from karaqueue import common
 from karaqueue import utils
 from karaqueue.downloaders import bilibili
 from karaqueue.downloaders import niconico
+from karaqueue.downloaders import soundcloud
 from karaqueue.downloaders import youtube
 
 
@@ -152,6 +153,7 @@ _downloaders: List[common.Downloader] = [
     youtube.YoutubeDownloader(),
     niconico.NicoNicoDownloader(),
     bilibili.BilibiliDownloader(),
+    soundcloud.SoundcloudDownloader(),
 ]
 
 

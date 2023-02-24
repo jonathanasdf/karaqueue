@@ -4,5 +4,6 @@ bilix
 py-cord[speed]
 pytube
 requests
+soundcloud-lib
 StringProgressBar
 urllib3
