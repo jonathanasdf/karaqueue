@@ -36,32 +36,33 @@ def update_config_file() -> None:
 @dataclasses.dataclass
 class LoadResult:
     """Results from loading a video."""
-    video_path: str
-    audio_path: str
+    video_path: str = ""
+    audio_path: str = ""
     width: int = 0
     height: int = 0
+
+
+LoadFn = Callable[['Entry', asyncio.Event], Awaitable[LoadResult]]
 
 
 @dataclasses.dataclass
 class Entry:
     """An entry in the queue."""
+    path: str
     title: str
     original_url: str
-    path: str
-    load_fn: Callable[['Entry', asyncio.Event],
-                      Awaitable[Optional[LoadResult]]]
+    load_fns: List[LoadFn]
 
-    queue: Optional['Queue'] = None
-    user_id: int = 0
-    pitch_shift: int = 0
-    offset_ms: int = 0
+    queue: 'Queue'
+    user_id: int
+    pitch_shift: int
+    offset_ms: int
 
-    always_process: bool = False
-    load_result: Optional[LoadResult] = None
-    load_msg: str = ''
-    error_msg: str = ''
     processed: bool = False
     process_task: Optional[asyncio.Task] = None
+    load_msg: str = ''
+    error_msg: str = ''
+    _load_result: Optional[LoadResult] = None
 
     @property
     def name(self) -> str:
@@ -102,44 +103,39 @@ class Entry:
         relpath = pathlib.Path(relpath).as_posix()
         return f'https://{HOST}/{relpath}'
 
-    def _need_processing(self) -> bool:
-        if self.queue is None:
-            raise ValueError('Queue reference not set!')
-        if self.always_process:
-            return True
-        if self.pitch_shift:
-            return True
-        if self.offset_ms + self.queue.global_offset_ms != 0:
-            return True
-        return False
-
     def url(self) -> str:
         """Get external video url for this entry."""
         if not self.processed:
             raise RuntimeError('task has not been processed!')
-        if not self._need_processing():
-            return self.original_url
         return (self._get_server_path(self.path) +
                 '?' + ''.join(random.choice(string.ascii_letters) for _ in range(8)))
 
     async def process(self, cancel: asyncio.Event) -> None:
         """Process the video."""
-        if not self._need_processing():
-            return
+        if self._load_result is None:
+            self._load_result = LoadResult()
+            for load_fn in self.load_fns:
+                try:
+                    res = await load_fn(self, cancel)
+                except Exception as err:  # pylint: disable=broad-except
+                    self.error_msg = f'Error: {err}'
+                    return
+                if res.video_path:
+                    self._load_result.video_path = res.video_path
+                if res.audio_path:
+                    self._load_result.audio_path = res.audio_path
+                if res.width:
+                    self._load_result.width = res.width
+                if res.height:
+                    self._load_result.height = res.height
 
-        if self.load_result is None:
-            res = await self.load_fn(self, cancel)
-            if res is None:
-                return
-            self.load_result = res
-
-        if self.load_result.width == 0 or self.load_result.height == 0:
+        if self._load_result.width == 0 or self._load_result.height == 0:
             dimensions = utils.call(
                 'ffprobe',
                 '-loglevel quiet -select_streams v:0 -show_entries stream=width,height -of csv=p=0 '
-                f'"{os.path.join(self.path, self.load_result.video_path)}"',
+                f'"{os.path.join(self.path, self._load_result.video_path)}"',
                 return_stdout=True)
-            self.load_result.width, self.load_result.height = map(
+            self._load_result.width, self._load_result.height = map(
                 int, dimensions.split(','))
 
         await asyncio.to_thread(self._process_load_result)
@@ -147,9 +143,9 @@ class Entry:
     def _process_load_result(self) -> None:
         if self.queue is None:
             raise ValueError('Queue reference not set!')
-        if self.load_result is None:
+        if self._load_result is None:
             return
-        audio_path = os.path.join(self.path, self.load_result.audio_path)
+        audio_path = os.path.join(self.path, self._load_result.audio_path)
         if self.pitch_shift:
             self.load_msg = f'Loading video `{self.title}`...\nShifting pitch...'
             shift_path = os.path.join(self.path, 'shifted.mp3')
@@ -158,7 +154,7 @@ class Entry:
                 'sox', f'"{audio_path}" "{shift_path}" pitch {pitch_cents}')
             audio_path = shift_path
 
-        video_path = os.path.join(self.path, self.load_result.video_path)
+        video_path = os.path.join(self.path, self._load_result.video_path)
 
         offset_ms = self.offset_ms + self.queue.global_offset_ms
         if offset_ms == 0:
@@ -191,8 +187,8 @@ class Entry:
         <meta property="og:type" content="video" />
         <meta property="og:image" content="{self._get_server_path(thumb_path)}" />
         <meta property="og:video" content="{self._get_server_path(output)}" />
-        <meta property="og:video:width" content="{self.load_result.width}" />
-        <meta property="og:video:height" content="{self.load_result.height}" />
+        <meta property="og:video:width" content="{self._load_result.width}" />
+        <meta property="og:video:height" content="{self._load_result.height}" />
         <meta property="og:video:type" content="video/mp4" />
     </head>
 </html>
@@ -253,6 +249,14 @@ def get_queue(guild_id: Optional[int], channel_id: Optional[int]) -> Queue:
     return karaqueue[key]
 
 
+@dataclasses.dataclass
+class DownloadResult:
+    """Result of a Downloader.load() call."""
+    title: str
+    original_url: str
+    load_fn: LoadFn
+
+
 class Downloader:
     """A video downloader."""
 
@@ -261,7 +265,7 @@ class Downloader:
         raise NotImplementedError()
 
     async def load(
-        self, interaction: discord.Interaction, url: str, path: str,
-    ) -> Optional[Entry]:
-        """Create an entry object representing the video at the url under the base path."""
+        self, interaction: discord.Interaction, url: str, *, video: bool, audio: bool,
+    ) -> DownloadResult:
+        """Return a loader function for the url."""
         raise NotImplementedError()

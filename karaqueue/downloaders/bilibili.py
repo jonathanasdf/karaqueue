@@ -2,7 +2,6 @@
 import asyncio
 import logging
 import os
-from typing import Optional
 import bilix
 import bilix.api.bilibili
 import bilix.progress
@@ -48,21 +47,16 @@ class BilibiliDownloader(common.Downloader):
         return 'bilibili.com/video/' in url
 
     async def load(
-        self, interaction: discord.Interaction, url: str, path: str,
-    ) -> Optional[common.Entry]:
+        self, interaction: discord.Interaction, url: str, *, video: bool, audio: bool,
+    ) -> common.DownloadResult:
         informer = bilix.info.InformerBilibili(sess_data=SESSDATA)
         info = await bilix.api.bilibili.get_video_info(informer.client, url)
         await informer.aclose()
         if not info.dash:
-            await utils.respond(interaction, 'Unknown error getting video.', ephemeral=True)
-            return
-
+            raise RuntimeError('Unknown error getting video.')
         if info.dash.duration > common.VIDEO_LIMIT_MINS * 60:
-            await utils.respond(
-                interaction,
-                f'Please only queue videos shorter than {common.VIDEO_LIMIT_MINS} minutes.',
-                ephemeral=True)
-            return
+            raise ValueError(
+                f'Please only queue videos shorter than {common.VIDEO_LIMIT_MINS} minutes.')
 
         for quality in info.dash.video_formats:
             if len(info.dash.video_formats[quality]) == 0:
@@ -81,19 +75,18 @@ class BilibiliDownloader(common.Downloader):
                 sess_data=SESSDATA)
             await downloader.get_video(url)
             await downloader.aclose()
-
             video_path = f'{title}.mp4'
-            audio_path = 'audio.mp3'
-            utils.call('ffmpeg', f'-i "{os.path.join(entry.path, video_path)}" '
-                       f'-ac 2 -f mp3 "{os.path.join(entry.path, audio_path)}"')
 
-            return common.LoadResult(
-                video_path=video_path,
-                audio_path=audio_path)
+            result = common.LoadResult()
+            if video:
+                result.video_path = video_path
+            if audio:
+                result.audio_path = 'audio.mp3'
+                utils.call('ffmpeg', f'-i "{os.path.join(entry.path, video_path)}" '
+                           f'-ac 2 -f mp3 "{os.path.join(entry.path, result.audio_path)}"')
+            return result
 
-        return common.Entry(
+        return common.DownloadResult(
             title=title,
             original_url=url,
-            path=path,
-            always_process=True,
             load_fn=load_streams)

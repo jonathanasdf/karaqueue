@@ -3,7 +3,7 @@ import asyncio
 import base64
 import functools
 import os
-from typing import Optional
+import tempfile
 import discord
 import StringProgressBar
 
@@ -13,7 +13,8 @@ from karaqueue.downloaders import nicoutils
 
 
 USERNAME = common.CONFIG['NICONICO']['username']
-PASSWORD = base64.b64decode(common.CONFIG['NICONICO']['password']).decode('utf-8')
+PASSWORD = base64.b64decode(
+    common.CONFIG['NICONICO']['password']).decode('utf-8')
 SESSION_COOKIE = common.CONFIG['NICONICO'].get('session', '')
 
 
@@ -33,23 +34,20 @@ class NicoNicoDownloader(common.Downloader):
         return 'nicovideo.jp/watch/sm' in url
 
     async def load(
-        self, interaction: discord.Interaction, url: str, path: str,
-    ) -> Optional[common.Entry]:
+        self, interaction: discord.Interaction, url: str, *, video: bool, audio: bool,
+    ) -> common.DownloadResult:
         sess, session_cookie = nicoutils.login(
             USERNAME, PASSWORD, SESSION_COOKIE)
         update_session_cookie(session_cookie)
         params = nicoutils.get_video_params(sess, url)
         title = params['video']['title']
         if params['video']['duration'] > common.VIDEO_LIMIT_MINS * 60:
-            await utils.respond(
-                interaction,
-                f'Please only queue videos shorter than {common.VIDEO_LIMIT_MINS} minutes.',
-                ephemeral=True)
-            return
+            raise ValueError(
+                f'Please only queue videos shorter than {common.VIDEO_LIMIT_MINS} minutes.')
         await utils.edit(
             interaction, content=f'Loading niconico video `{title}`...')
 
-        def load_streams(entry: common.Entry, cancel: asyncio.Event) -> Optional[common.LoadResult]:
+        def load_streams(entry: common.Entry, cancel: asyncio.Event) -> common.LoadResult:
             sess, session_cookie = nicoutils.login(
                 USERNAME, PASSWORD, SESSION_COOKIE)
             update_session_cookie(session_cookie)
@@ -64,21 +62,25 @@ class NicoNicoDownloader(common.Downloader):
                     f'Loading niconico video `{title}`...\n'
                     f'Downloading: {progress[0]} {progress[1]:0.0f}% of {total_size_mb:0.1f}Mb')
 
-            video_path = 'video.mp4'
-            nicoutils.download_video(sess, url, os.path.join(
-                entry.path, video_path), progress_func)
+            result = common.LoadResult()
+            if video:
+                result.video_path = 'video.mp4'
+                nicoutils.download_video(sess, url, os.path.join(
+                    entry.path, result.video_path), progress_func)
 
-            audio_path = 'audio.mp3'
-            utils.call('ffmpeg', f'-i "{os.path.join(entry.path, video_path)}" '
-                       f'-ac 2 -f mp3 "{os.path.join(entry.path, audio_path)}"')
+            if audio:
+                if video:
+                    video_path = os.path.join(entry.path, result.video_path)
+                else:
+                    video_path = tempfile.mktemp(dir=entry.path, suffix='.mp4')
+                    nicoutils.download_video(
+                        sess, url, video_path, progress_func)
+                result.audio_path = 'audio.mp3'
+                utils.call('ffmpeg', f'-i "{video_path}" '
+                           f'-ac 2 -f mp3 "{os.path.join(entry.path, result.audio_path)}"')
+            return result
 
-            return common.LoadResult(
-                video_path=video_path,
-                audio_path=audio_path)
-
-        return common.Entry(
+        return common.DownloadResult(
             title=title,
             original_url=url,
-            path=path,
-            always_process=True,
             load_fn=functools.partial(asyncio.to_thread, load_streams))

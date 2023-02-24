@@ -7,7 +7,7 @@ import pathlib
 import signal
 import tempfile
 import typing
-from typing import Optional
+from typing import List, Optional
 from absl import app
 from absl import flags
 import discord
@@ -58,21 +58,24 @@ class AddSongModal(discord.ui.Modal):
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        self.add_item(discord.ui.InputText(label="URL"))  # type: ignore
+        self.add_item(discord.ui.InputText(label="Video URL"))  # type: ignore
+        self.add_item(discord.ui.InputText(
+            label="Audio URL (optional)", required=False))  # type: ignore
         self.add_item(discord.ui.InputText(
             label="Pitch Shift (optional)", required=False))  # type: ignore
         self.add_item(discord.ui.InputText(
             label="Audio Delay Milliseconds (optional)", required=False))  # type: ignore
 
     async def callback(self, interaction: discord.Interaction):
-        url = str(self.children[0].value)
+        video_url = str(self.children[0].value)
+        audio_url = str(self.children[1].value)
         pitch_shift = 0
-        if self.children[1].value:
-            pitch_shift = int(self.children[1].value)
-        offset_ms = 0
         if self.children[2].value:
-            offset_ms = int(self.children[2].value)
-        await _load(interaction, url, pitch_shift, offset_ms)
+            pitch_shift = int(self.children[2].value)
+        offset_ms = 0
+        if self.children[3].value:
+            offset_ms = int(self.children[3].value)
+        await _load(interaction, video_url, audio_url, pitch_shift, offset_ms)
 
 
 class EmptyQueueView(discord.ui.View):
@@ -145,19 +148,22 @@ async def send_add_song_modal(ctx: discord.ApplicationContext):
     await ctx.send_modal(AddSongModal(title='Add Song'))
 
 
-_downloaders = [
+_downloaders: List[common.Downloader] = [
     youtube.YoutubeDownloader(),
     niconico.NicoNicoDownloader(),
     bilibili.BilibiliDownloader(),
 ]
 
 
-async def _load(interaction: discord.Interaction, url: str, pitch: int, offset_ms: int):
+async def _load(
+    interaction: discord.Interaction, video_url: str, audio_url: str, pitch: int, offset_ms: int,
+):
     """Load a song from a url."""
     user = interaction.user
     if user is None:
         return
-    url = url.strip()
+    video_url = video_url.strip()
+    audio_url = audio_url.strip()
     karaqueue = common.get_queue(interaction.guild_id, interaction.channel_id)
     async with karaqueue.lock:
         if len(karaqueue) >= common.MAX_QUEUED:
@@ -170,34 +176,48 @@ async def _load(interaction: discord.Interaction, url: str, pitch: int, offset_m
                 f'Each user may only have {common.MAX_QUEUED_PER_USER} songs in the queue!',
                 ephemeral=True)
             return
-    await utils.respond(interaction, f'Loading `{url}`...', ephemeral=True)
-    entry: Optional[common.Entry] = None
-    has_match = False
-    for downloader in _downloaders:
-        if downloader.match(url):
-            has_match = True
-            logging.info(f'Loading {url}...')
-            path = tempfile.mkdtemp(dir=pathlib.PurePath(common.SERVING_DIR))
-            try:
-                entry = await downloader.load(interaction, url, path)
-            except Exception as err:  # pylint: disable=broad-except
-                logging.info(f'Error: {err}')
-                await utils.respond(interaction, f'Error: {err}', ephemeral=True)
-            break
-    if not has_match:
-        await utils.respond(interaction, f'Unrecognized url `{url}`', ephemeral=True)
-    if entry is not None:
-        entry.queue = karaqueue
-        entry.user_id = user.id
-        entry.pitch_shift = pitch
-        entry.offset_ms = offset_ms
-        async with karaqueue.lock:
-            karaqueue.append(entry)
-            await print_queue_locked(interaction, karaqueue)
-            entry.onchange_locked()
-            async with new_process_task:
-                new_process_task.notify()
-        await interaction.delete_original_response()
+
+    await utils.respond(interaction, f'Loading `{video_url}`...', ephemeral=True)
+    path = tempfile.mkdtemp(dir=pathlib.PurePath(common.SERVING_DIR))
+
+    async def download(url: str, *, video: bool, audio: bool) -> common.DownloadResult:
+        for downloader in _downloaders:
+            if downloader.match(url):
+                logging.info(f'Loading {url}...')
+                return await downloader.load(interaction, url, video=video, audio=audio)
+        raise ValueError(f'Unrecognized url `{url}`')
+
+    try:
+        video_result = await download(video_url, video=True, audio=not audio_url)
+    except Exception as err:  # pylint: disable=broad-except
+        logging.info(f'Error: {err}')
+        await utils.respond(interaction, f'Error: {err}', ephemeral=True)
+        return
+    load_fns = [video_result.load_fn]
+    if audio_url != "":
+        try:
+            audio_result = await download(audio_url, video=False, audio=True)
+        except Exception as err:  # pylint: disable=broad-except
+            logging.info(f'Error: {err}')
+            await utils.respond(interaction, f'Error: {err}', ephemeral=True)
+            return
+        load_fns.append(audio_result.load_fn)
+    entry = common.Entry(
+        path=path,
+        title=video_result.title,
+        original_url=video_result.original_url,
+        load_fns=load_fns,
+        queue=karaqueue,
+        user_id=user.id,
+        pitch_shift=pitch,
+        offset_ms=offset_ms)
+    async with karaqueue.lock:
+        karaqueue.append(entry)
+        await print_queue_locked(interaction, karaqueue)
+        entry.onchange_locked()
+        async with new_process_task:
+            new_process_task.notify()
+    await interaction.delete_original_response()
 
 
 @bot.slash_command(name='pitch', guild_ids=GUILD_IDS)
