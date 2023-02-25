@@ -9,7 +9,7 @@ import pathlib
 import random
 import string
 import tempfile
-from typing import Awaitable, Callable, Dict, List, Optional, Tuple
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 import discord
 
 from karaqueue import utils
@@ -20,8 +20,8 @@ CONFIG = configparser.ConfigParser()
 CONFIG.read(_CONFIG_FILE)
 
 
-HOST = CONFIG['DEFAULT'].get('host')
-SERVING_DIR = CONFIG['DEFAULT'].get('serving_dir')
+HOST = CONFIG['DEFAULT']['host']
+SERVING_DIR = CONFIG['DEFAULT']['serving_dir']
 VIDEO_LIMIT_MINS = 10
 MAX_QUEUED = 20
 MAX_QUEUED_PER_USER = 2
@@ -63,6 +63,7 @@ class Entry:
     load_msg: str = ''
     error_msg: str = ''
     _load_result: Optional[LoadResult] = None
+    _processed_path: str = ''
 
     @property
     def name(self) -> str:
@@ -109,6 +110,12 @@ class Entry:
             raise RuntimeError('task has not been processed!')
         return (self._get_server_path(self.path) +
                 '?' + ''.join(random.choice(string.ascii_letters) for _ in range(8)))
+
+    def video_path(self) -> str:
+        """Get internal path to processed video."""
+        if not self.processed:
+            raise RuntimeError('task has not been processed!')
+        return self._processed_path
 
     async def process(self, cancel: asyncio.Event) -> None:
         """Process the video."""
@@ -169,9 +176,9 @@ class Entry:
                            f'-c:a copy -c:v copy -map 1:v:0 -map 0:a:0')
 
         self.load_msg = f'Loading video `{self.title}`...\nCreating video...'
-        output = tempfile.mktemp(dir=self.path, suffix='.mp4')
+        self._processed_path = tempfile.mktemp(dir=self.path, suffix='.mp4')
         utils.call(
-            'ffmpeg', f'{input_flags} -movflags faststart {output}')
+            'ffmpeg', f'{input_flags} -movflags faststart {self._processed_path}')
 
         thumb_path = os.path.join(self.path, 'thumb.jpg')
         if not os.path.exists(thumb_path):
@@ -186,7 +193,7 @@ class Entry:
         <meta property="og:title" content="{self.name}" />
         <meta property="og:type" content="video" />
         <meta property="og:image" content="{self._get_server_path(thumb_path)}" />
-        <meta property="og:video" content="{self._get_server_path(output)}" />
+        <meta property="og:video" content="{self._get_server_path(self._processed_path)}" />
         <meta property="og:video:width" content="{self._load_result.width}" />
         <meta property="og:video:height" content="{self._load_result.height}" />
         <meta property="og:video:type" content="video/mp4" />
@@ -203,6 +210,7 @@ class Queue:
     msg_id: Optional[int] = None
     current: Optional[Entry] = None
     queue: List[Entry] = dataclasses.field(default_factory=list)
+    flags: Dict[str, Any] = dataclasses.field(default_factory=dict)
     lock = asyncio.Lock()
 
     global_offset_ms: int = 0

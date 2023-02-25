@@ -44,7 +44,7 @@ setup_logging()
 
 
 BOT_TOKEN = common.CONFIG['DEFAULT']['token']
-GUILD_IDS = common.CONFIG['DEFAULT']['guild_ids'].split(',')
+DEV_USER_ID = common.CONFIG['DEFAULT'].get('dev_user_id')
 
 
 os.makedirs(common.SERVING_DIR, exist_ok=True)
@@ -110,35 +110,38 @@ async def _help(ctx: discord.ApplicationContext):
         '`/move from to`: change the position of an entry in the playlist.',
         ('`/pitch pitch [index]`: change the pitch of a video on the playlist. '
          'Leave out index to change currently playing video.'),
+        ('`/offset offset [index]`: change the audio delay of a video on the playlist. '
+         'Leave out index to change currently playing video. '
+         'Delay is in milliseconds. Positive numbers make the audio later.'),
     ]
     await utils.respond(ctx, '\n'.join(resp), ephemeral=True)
 
 
-@bot.slash_command(name='help', guild_ids=GUILD_IDS)
+@bot.slash_command(name='help', aliases=['commands'])
 async def command_help(ctx: discord.ApplicationContext):
     """Help."""
     await _help(ctx)
 
 
-@bot.slash_command(name='commands', guild_ids=GUILD_IDS)
+@bot.slash_command(name='commands')
 async def command_commands(ctx: discord.ApplicationContext):
     """Commands."""
     await _help(ctx)
 
 
-@bot.slash_command(name='q', guild_ids=GUILD_IDS)
+@bot.slash_command(name='q')
 async def command_q(ctx: discord.ApplicationContext):
     """Add song."""
     await send_add_song_modal(ctx)
 
 
-@bot.slash_command(name='add', guild_ids=GUILD_IDS)
+@bot.slash_command(name='add')
 async def command_add(ctx: discord.ApplicationContext):
     """Add song."""
     await send_add_song_modal(ctx)
 
 
-@bot.slash_command(name='load', guild_ids=GUILD_IDS)
+@bot.slash_command(name='load')
 async def command_load(ctx: discord.ApplicationContext):
     """Add song."""
     await send_add_song_modal(ctx)
@@ -222,7 +225,7 @@ async def _load(
     await interaction.delete_original_response()
 
 
-@bot.slash_command(name='pitch', guild_ids=GUILD_IDS)
+@bot.slash_command(name='pitch')
 async def command_pitch(ctx: discord.ApplicationContext, pitch: int, index: int = 0):
     """Change the pitch of a song."""
     karaqueue = common.get_queue(ctx.guild_id, ctx.channel_id)
@@ -253,7 +256,7 @@ async def command_pitch(ctx: discord.ApplicationContext, pitch: int, index: int 
         await _update_with_current(ctx)
 
 
-@bot.slash_command(name='offset', guild_ids=GUILD_IDS)
+@bot.slash_command(name='offset')
 async def command_offset(
     ctx: discord.ApplicationContext, offset_ms: int, index: Optional[int] = None,
 ):
@@ -299,7 +302,7 @@ async def command_offset(
         await _update_with_current(ctx)
 
 
-@bot.slash_command(name='list', guild_ids=GUILD_IDS)
+@bot.slash_command(name='list')
 async def command_list(ctx: discord.ApplicationContext):
     """Show the queue."""
     karaqueue = common.get_queue(ctx.guild_id, ctx.channel_id)
@@ -307,7 +310,7 @@ async def command_list(ctx: discord.ApplicationContext):
         await print_queue_locked(ctx, karaqueue)
 
 
-@bot.slash_command(name='next', guild_ids=GUILD_IDS)
+@bot.slash_command(name='next')
 async def command_next(ctx: discord.ApplicationContext):
     """Play the next song."""
     await _next(ctx)
@@ -349,18 +352,22 @@ async def _update_with_current(ctx: utils.DiscordContext):
             await resp.edit(content=f'Loading `{entry.name}`...\n`' + next(spinner)*4 + '`')
             await asyncio.sleep(0.1)
     logging.info(f'Now playing {entry.name} {entry.url()}')
-    await resp.edit(
-        content=(f'**Now playing**\n[`{entry.name}`](<{entry.original_url}>)'
-                 f'[]({entry.url()})'))
+    if karaqueue.flags.get('launch_binary'):
+        await resp.edit(content=f'**Now playing**\n[`{entry.name}`](<{entry.original_url}>)')
+        utils.call(karaqueue.flags['launch_binary'], f'"{entry.video_path()}"', background=True)
+    else:
+        await resp.edit(
+            content=(f'**Now playing**\n[`{entry.name}`](<{entry.original_url}>)'
+                    f'[]({entry.url()})'))
 
 
-@bot.slash_command(name='delete', guild_ids=GUILD_IDS)
+@bot.slash_command(name='delete')
 async def command_delete(ctx: discord.ApplicationContext, index: int):
     """Delete a song from the queue."""
     await _delete(ctx, index)
 
 
-@bot.slash_command(name='remove', guild_ids=GUILD_IDS)
+@bot.slash_command(name='remove')
 async def command_remove(ctx: discord.ApplicationContext, index: int):
     """Delete a song from the queue."""
     await _delete(ctx, index)
@@ -402,7 +409,7 @@ async def _delete(ctx: discord.ApplicationContext, index: int):
     await utils.respond(ctx, f'Deleting `{entry.title}`, are you sure?', view=DeleteConfirmView())
 
 
-@bot.slash_command(name='move', guild_ids=GUILD_IDS)
+@bot.slash_command(name='move')
 async def command_move(ctx: discord.ApplicationContext, index_from: int, index_to: int):
     """Change the position of a song in the queue."""
     karaqueue = common.get_queue(ctx.guild_id, ctx.channel_id)
@@ -417,6 +424,22 @@ async def command_move(ctx: discord.ApplicationContext, index_from: int, index_t
         del karaqueue[index_from-1]
         karaqueue.insert(index_to-1, entry)
         await print_queue_locked(ctx, karaqueue)
+
+
+async def is_dev(ctx: commands.Context) -> bool:
+    """Is the user the dev user."""
+    if not DEV_USER_ID:
+        return False
+    return str(ctx.author.id) == DEV_USER_ID
+
+
+@bot.slash_command(name='devset')
+@commands.check(is_dev)
+async def command_set(ctx: discord.ApplicationContext, key: str, value: str):
+    """Set dev flags."""
+    karaqueue = common.get_queue(ctx.guild_id, ctx.channel_id)
+    karaqueue.flags[key] = value
+    await utils.respond(ctx, content='Success', ephemeral=True)
 
 
 async def print_queue_locked(ctx: utils.DiscordContext, karaqueue: common.Queue):

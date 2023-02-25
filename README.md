@@ -11,7 +11,7 @@ This project implements a Discord bot that manages a queue for a local karaoke s
 ```dosini
 [DEFAULT]
 token = <discord bot token>
-guild_ids = <comma separated discord server id>
+dev_user_id = <your user id>
 internal_host = <internal ip to serve from, eg. 127.0.0.1>
 host = <public url to host machine>
 serving_dir = <absolute path to write videos to>
@@ -19,6 +19,9 @@ serving_dir = <absolute path to write videos to>
 [NICONICO]
 username = <email address>
 password = <base64 encoded password>
+
+[BILIBILI]
+sessdata = <optional SESSDATA cookie>
 ```
 
 3. Install prereqs

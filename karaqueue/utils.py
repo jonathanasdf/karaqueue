@@ -6,21 +6,24 @@ from typing import Union
 import discord
 
 
-def call(binary: str, cmd: str, return_stdout: bool = False) -> str:
+def call(binary: str, cmd: str, return_stdout: bool = False, background: bool = False) -> str:
     """Call a local binary with a command."""
-    if platform.system() == 'Windows':
+    if platform.system() == 'Windows' and not binary.endswith('.exe'):
         binary = f'{binary}.exe'
     if return_stdout:
         try:
-            result = subprocess.run(f'{binary} {cmd}', shell=True, check=True,
-                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            result = subprocess.run(
+                f'"{binary}" {cmd}', shell=True, check=True, capture_output=True)
             return result.stdout.decode('utf-8')
         except subprocess.CalledProcessError as err:
             logging.error(err.stdout.decode('utf-8'))
             logging.error(err.stderr.decode('utf-8'))
             raise
+    if background:
+        subprocess.Popen(f'"{binary}" {cmd}', shell=True)  # pylint: disable=consider-using-with
+        return ''
     try:
-        subprocess.run(f'{binary} {cmd}', shell=True, check=True,
+        subprocess.run(f'"{binary}" {cmd}', shell=True, check=True,
                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         return ''
     except subprocess.CalledProcessError as err:
