@@ -20,7 +20,7 @@ CONFIG = configparser.ConfigParser()
 CONFIG.read(_CONFIG_FILE)
 
 
-HOST = CONFIG['DEFAULT']['host']
+HOST = CONFIG['DEFAULT'].get('host')
 SERVING_DIR = CONFIG['DEFAULT']['serving_dir']
 VIDEO_LIMIT_MINS = 10
 MAX_QUEUED = 20

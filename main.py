@@ -45,6 +45,7 @@ setup_logging()
 
 BOT_TOKEN = common.CONFIG['DEFAULT']['token']
 DEV_USER_ID = common.CONFIG['DEFAULT'].get('dev_user_id')
+LAUNCH_BINARY = common.CONFIG['DEFAULT'].get('launch_binary')
 
 
 os.makedirs(common.SERVING_DIR, exist_ok=True)
@@ -333,6 +334,10 @@ async def _update_with_current(ctx: utils.DiscordContext):
     entry = karaqueue.current
     if entry is None:
         return
+    if karaqueue.flags.get('local') == 'true' and not LAUNCH_BINARY:
+        await utils.respond(
+            ctx, content='launch_binary must be configured for local mode.', ephemeral=True)
+        return
     resp = await utils.respond(ctx, content=f'Loading `{entry.name}`...')
     if isinstance(resp, discord.Interaction):
         resp = await resp.original_response()
@@ -352,9 +357,9 @@ async def _update_with_current(ctx: utils.DiscordContext):
             await resp.edit(content=f'Loading `{entry.name}`...\n`' + next(spinner)*4 + '`')
             await asyncio.sleep(0.1)
     logging.info(f'Now playing {entry.name} {entry.url()}')
-    if karaqueue.flags.get('launch_binary'):
+    if karaqueue.flags.get('local') == 'true':
         await resp.edit(content=f'**Now playing**\n[`{entry.name}`](<{entry.original_url}>)')
-        utils.call(karaqueue.flags['launch_binary'], f'"{entry.video_path()}"', background=True)
+        utils.call(LAUNCH_BINARY, f'"{entry.video_path()}"', background=True)
     else:
         await resp.edit(
             content=(f'**Now playing**\n[`{entry.name}`](<{entry.original_url}>)'
