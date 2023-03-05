@@ -9,7 +9,7 @@ import pathlib
 import random
 import string
 import tempfile
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
+from typing import Awaitable, Callable, Dict, List, Optional, Tuple
 import discord
 
 from karaqueue import utils
@@ -25,6 +25,9 @@ SERVING_DIR = CONFIG['DEFAULT']['serving_dir']
 VIDEO_LIMIT_MINS = 10
 MAX_QUEUED = 20
 MAX_QUEUED_PER_USER = 2
+
+# Number of seconds after a new video started playing before the next button can be used.
+ADVANCE_BUFFER_SECS = 10
 
 
 def update_config_file() -> None:
@@ -125,8 +128,10 @@ class Entry:
                 try:
                     res = await load_fn(self, cancel)
                 except Exception as err:  # pylint: disable=broad-except
+                    logging.exception(err)
                     self.error_msg = f'Error: {err}'
                     return
+                logging.info(f'Got load_result for {self.title}')
                 if res.video_path:
                     self._load_result.video_path = res.video_path
                 if res.audio_path:
@@ -151,7 +156,7 @@ class Entry:
         if self.queue is None:
             raise ValueError('Queue reference not set!')
         if self._load_result is None:
-            return
+            raise ValueError('load_result is None! This should not happen!')
         audio_path = os.path.join(self.path, self._load_result.audio_path)
         if self.pitch_shift:
             self.load_msg = f'Loading video `{self.title}`...\nShifting pitch...'
@@ -210,10 +215,11 @@ class Queue:
     msg_id: Optional[int] = None
     current: Optional[Entry] = None
     queue: List[Entry] = dataclasses.field(default_factory=list)
-    flags: Dict[str, Any] = dataclasses.field(default_factory=dict)
     lock = asyncio.Lock()
 
     global_offset_ms: int = 0
+    local: bool = False
+    next_advance_time: Optional[datetime.datetime] = None
 
     def __len__(self):
         return len(self.queue)
@@ -243,15 +249,30 @@ class Queue:
         """Pop."""
         return self.queue.pop(index)
 
+    def format(self) -> str:
+        """Format the queue as a string."""
+        resp = []
+        for i, entry in enumerate(self):
+            row = f'{i+1}. [`{entry.name}`](<{entry.original_url}>)'
+            resp.append(row)
+        return '\n'.join(resp)
+
 
 karaqueue: Dict[Tuple[int, int], Queue] = {}
+
+
+def get_queue_key(guild_id: Optional[int], channel_id: Optional[int]) -> Tuple[int, int]:
+    """Get the queue key corresponding to the given guild and channel."""
+    if guild_id is None or channel_id is None:
+        raise ValueError('guild_id or channel_id is None')
+    return int(guild_id), int(channel_id)
 
 
 def get_queue(guild_id: Optional[int], channel_id: Optional[int]) -> Queue:
     """Get the queue corresponding to the given guild and channel."""
     if guild_id is None or channel_id is None:
         raise ValueError('guild_id or channel_id is None')
-    key = (int(guild_id), int(channel_id))
+    key = get_queue_key(guild_id, channel_id)
     if key not in karaqueue:
         karaqueue[key] = Queue(guild_id=guild_id, channel_id=channel_id)
     return karaqueue[key]

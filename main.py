@@ -1,5 +1,6 @@
 """Karaqueue discord bot."""
 import asyncio
+import datetime
 import itertools
 import logging
 import os
@@ -196,7 +197,7 @@ async def _load(
     try:
         video_result = await download(video_url, video=True, audio=not audio_url)
     except Exception as err:  # pylint: disable=broad-except
-        logging.info(f'Error: {err}')
+        logging.exception(err)
         await utils.respond(interaction, f'Error: {err}', ephemeral=True)
         return
     load_fns = [video_result.load_fn]
@@ -204,7 +205,7 @@ async def _load(
         try:
             audio_result = await download(audio_url, video=False, audio=True)
         except Exception as err:  # pylint: disable=broad-except
-            logging.info(f'Error: {err}')
+            logging.exception(err)
             await utils.respond(interaction, f'Error: {err}', ephemeral=True)
             return
         load_fns.append(audio_result.load_fn)
@@ -324,6 +325,14 @@ async def _next(ctx: utils.DiscordContext):
         if len(karaqueue) == 0:
             await utils.respond(ctx, content='No songs in queue!')
             return
+        now = datetime.datetime.now()
+        if karaqueue.next_advance_time is not None and now < karaqueue.next_advance_time:
+            diff = karaqueue.next_advance_time - now
+            msg = f'The next button was just pressed! It will be reenabled in {diff.seconds}s.'
+            await utils.respond(ctx, content=msg, ephemeral=True)
+            return
+        karaqueue.next_advance_time = now + \
+            datetime.timedelta(seconds=common.ADVANCE_BUFFER_SECS)
         karaqueue.current = karaqueue.pop(0)
     await _update_with_current(ctx)
 
@@ -334,7 +343,7 @@ async def _update_with_current(ctx: utils.DiscordContext):
     entry = karaqueue.current
     if entry is None:
         return
-    if karaqueue.flags.get('local') == 'true' and not LAUNCH_BINARY:
+    if karaqueue.local and not LAUNCH_BINARY:
         await utils.respond(
             ctx, content='launch_binary must be configured for local mode.', ephemeral=True)
         return
@@ -357,13 +366,13 @@ async def _update_with_current(ctx: utils.DiscordContext):
             await resp.edit(content=f'Loading `{entry.name}`...\n`' + next(spinner)*4 + '`')
             await asyncio.sleep(0.1)
     logging.info(f'Now playing {entry.name} {entry.url()}')
-    if karaqueue.flags.get('local') == 'true':
+    if karaqueue.local:
         await resp.edit(content=f'**Now playing**\n[`{entry.name}`](<{entry.original_url}>)')
         utils.call(LAUNCH_BINARY, f'"{entry.video_path()}"', background=True)
     else:
         await resp.edit(
             content=(f'**Now playing**\n[`{entry.name}`](<{entry.original_url}>)'
-                    f'[]({entry.url()})'))
+                     f'[]({entry.url()})'))
 
 
 @bot.slash_command(name='delete')
@@ -438,13 +447,25 @@ async def is_dev(ctx: commands.Context) -> bool:
     return str(ctx.author.id) == DEV_USER_ID
 
 
-@bot.slash_command(name='devset')
+@bot.slash_command(name='dev')
 @commands.check(is_dev)
-async def command_set(ctx: discord.ApplicationContext, key: str, value: str):
-    """Set dev flags."""
-    karaqueue = common.get_queue(ctx.guild_id, ctx.channel_id)
-    karaqueue.flags[key] = value
-    await utils.respond(ctx, content='Success', ephemeral=True)
+async def command_dev(ctx: discord.ApplicationContext, command: str):
+    """Dev commands."""
+    if command == 'info':
+        msg = f'Current queue: {common.get_queue_key(ctx.guild_id, ctx.channel_id)}'
+        msg = msg + '\nAll queues:'
+        for queue_key, queue in common.karaqueue.items():
+            msg = msg + f'\n{queue_key}'
+            contents = queue.format()
+            if contents:
+                msg = msg + f'\n{contents}'
+        await utils.respond(ctx, content=msg, ephemeral=True)
+    elif command == 'local':
+        karaqueue = common.get_queue(ctx.guild_id, ctx.channel_id)
+        karaqueue.local = not karaqueue.local
+        await utils.respond(ctx, content='Success', ephemeral=True)
+    else:
+        await utils.respond(ctx, content=f'Unrecognized command {command}', ephemeral=True)
 
 
 async def print_queue_locked(ctx: utils.DiscordContext, karaqueue: common.Queue):
@@ -456,17 +477,13 @@ async def print_queue_locked(ctx: utils.DiscordContext, karaqueue: common.Queue)
             message = await channel.fetch_message(karaqueue.msg_id)
             await message.delete()
         except Exception:  # pylint: disable=broad-exception-caught
+            # Message already deleted, etc.
             pass
         karaqueue.msg_id = None
 
     if len(karaqueue) == 0:
         msg = await utils.respond(ctx, content='No songs in queue!', view=EmptyQueueView())
     else:
-        resp = []
-        for i, entry in enumerate(karaqueue):
-            row = f'{i+1}. [`{entry.name}`](<{entry.original_url}>)'
-            resp.append(row)
-
         class QueueView(EmptyQueueView):
             """Discord view for when queue is not empty. Has a Next Song button."""
 
@@ -475,8 +492,7 @@ async def print_queue_locked(ctx: utils.DiscordContext, karaqueue: common.Queue)
                 """Play the next song."""
                 await _next(ctx)
 
-        joined = '\n'.join(resp)
-        msg = await utils.respond(ctx, f'**Up Next**\n{joined}', view=QueueView())
+        msg = await utils.respond(ctx, f'**Up Next**\n{karaqueue.format()}', view=QueueView())
 
     if isinstance(msg, discord.Interaction):
         msg = await msg.original_response()
