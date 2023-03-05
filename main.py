@@ -47,6 +47,7 @@ setup_logging()
 BOT_TOKEN = common.CONFIG['DEFAULT']['token']
 DEV_USER_ID = common.CONFIG['DEFAULT'].get('dev_user_id')
 LAUNCH_BINARY = common.CONFIG['DEFAULT'].get('launch_binary')
+LAUNCH_OPTS = common.CONFIG['DEFAULT'].get('launch_opts')
 
 
 os.makedirs(common.SERVING_DIR, exist_ok=True)
@@ -328,11 +329,13 @@ async def _next(ctx: utils.DiscordContext):
         now = datetime.datetime.now()
         if karaqueue.next_advance_time is not None and now < karaqueue.next_advance_time:
             diff = karaqueue.next_advance_time - now
-            msg = f'The next button was just pressed! It will be reenabled in {diff.seconds}s.'
+            msg = f'A new song just started! The next button will be enabled in {diff.seconds}s.'
             await utils.respond(ctx, content=msg, ephemeral=True)
             return
-        karaqueue.next_advance_time = now + \
-            datetime.timedelta(seconds=common.ADVANCE_BUFFER_SECS)
+        if karaqueue.current is not None:
+            karaqueue.current.delete()
+        karaqueue.next_advance_time = (
+            now + datetime.timedelta(seconds=common.ADVANCE_BUFFER_SECS))
         karaqueue.current = karaqueue.pop(0)
     await _update_with_current(ctx)
 
@@ -356,7 +359,7 @@ async def _update_with_current(ctx: utils.DiscordContext):
     cur_msg = ''
     while not entry.processed:
         if entry.error_msg:
-            await resp.edit(content=entry.error_msg)
+            await resp.edit(content=f'Loading `{entry.name}`...\n{entry.error_msg}')
             return
         if entry.load_msg:
             if entry.load_msg != cur_msg:
@@ -368,7 +371,11 @@ async def _update_with_current(ctx: utils.DiscordContext):
     logging.info(f'Now playing {entry.name} {entry.url()}')
     if karaqueue.local:
         await resp.edit(content=f'**Now playing**\n[`{entry.name}`](<{entry.original_url}>)')
-        utils.call(LAUNCH_BINARY, f'"{entry.video_path()}"', background=True)
+        args = f'"{entry.video_path()}"'
+        if LAUNCH_OPTS:
+            args += f' "{LAUNCH_OPTS}"'
+        logging.info(f'Launching {LAUNCH_BINARY} {args}')
+        utils.call(LAUNCH_BINARY, args, background=True)
     else:
         await resp.edit(
             content=(f'**Now playing**\n[`{entry.name}`](<{entry.original_url}>)'
@@ -501,13 +508,13 @@ async def print_queue_locked(ctx: utils.DiscordContext, karaqueue: common.Queue)
 
 def main(_):
     """Main."""
-    cancel = asyncio.Event()
+    global_cancel = asyncio.Event()
 
-    def set_cancel(*_):
-        cancel.set()
+    def interrupt(*_):
+        global_cancel.set()
         bot.loop.stop()
-    signal.signal(signal.SIGINT, set_cancel)
-    signal.signal(signal.SIGTERM, set_cancel)
+    signal.signal(signal.SIGINT, interrupt)
+    signal.signal(signal.SIGTERM, interrupt)
 
     async def background_process():
         while True:
@@ -527,11 +534,7 @@ def main(_):
                 if entry_to_process is None:
                     await new_process_task.wait()
                     continue
-            if entry_to_process.process_task is not None:
-                entry_to_process.process_task.cancel()
-            process_task = entry_to_process.get_process_task(cancel)
-            entry_to_process.process_task = process_task
-            await process_task
+            await entry_to_process.create_process_task(global_cancel)
     bot.loop.create_task(background_process())
 
     bot.run(BOT_TOKEN)

@@ -1,6 +1,7 @@
 """Soundcloud downloader."""
 import asyncio
 import os
+from typing import List
 import sclib.asyncio
 import discord
 
@@ -22,14 +23,16 @@ class SoundcloudDownloader(common.Downloader):
         track = await sclib.asyncio.SoundcloudAPI().resolve(url)
         if not isinstance(track, sclib.asyncio.Track):
             raise ValueError('Invalid url.')
+        if track.duration == 0:
+            raise ValueError('Error getting audio info, please try again.')
         if track.duration / 1000 > common.VIDEO_LIMIT_MINS * 60:  # pylint: disable=no-member
             raise ValueError(
                 f'Please only queue videos shorter than {common.VIDEO_LIMIT_MINS} minutes.')
-        await utils.edit(
-            interaction, content=f'Loading soundcloud audio `{track.title}`...')
+        await utils.edit(interaction, content=f'Loading soundcloud audio `{track.title}`...')
 
-        async def load_streams(entry: common.Entry, cancel: asyncio.Event):
+        async def load_streams(entry: common.Entry, cancel: List[asyncio.Event]):
             del cancel  # Unused.
+            entry.load_msg = f'Loading soundcloud audio `{entry.title}`...'
             result = common.LoadResult()
             if audio:
                 result.audio_path = 'audio.mp3'

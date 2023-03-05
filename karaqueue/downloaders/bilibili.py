@@ -2,6 +2,7 @@
 import asyncio
 import logging
 import os
+from typing import List
 import bilix
 import bilix.api.bilibili
 import bilix.progress
@@ -19,7 +20,7 @@ SESSDATA = common.CONFIG['BILIBILI'].get('SESSDATA', '')
 class Progress(bilix.progress.CLIProgress):
     """Progress bar."""
 
-    def __init__(self, entry: common.Entry, cancel: asyncio.Event) -> None:
+    def __init__(self, entry: common.Entry, cancel: List[asyncio.Event]) -> None:
         self._entry = entry
         self._cancel = cancel
         super().__init__()
@@ -28,8 +29,9 @@ class Progress(bilix.progress.CLIProgress):
         return await super().add_task(*args, **kwargs)
 
     async def update(self, task_id, **kwargs):
-        if self._cancel.is_set():
-            raise asyncio.CancelledError()
+        for event in self._cancel:
+            if event.is_set():
+                raise asyncio.CancelledError()
         task = self.tasks[task_id]
         await super().update(task_id, **kwargs)
         total_size_mb = task.total / 1024 / 1024
@@ -54,6 +56,8 @@ class BilibiliDownloader(common.Downloader):
         await informer.aclose()
         if not info.dash:
             raise RuntimeError('Unknown error getting video.')
+        if info.dash.duration == 0:
+            raise ValueError('Error getting video info, please try again.')
         if info.dash.duration > common.VIDEO_LIMIT_MINS * 60:
             raise ValueError(
                 f'Please only queue videos shorter than {common.VIDEO_LIMIT_MINS} minutes.')
@@ -61,15 +65,12 @@ class BilibiliDownloader(common.Downloader):
         for quality in info.dash.video_formats:
             if len(info.dash.video_formats[quality]) == 0:
                 if '720P' in quality:
-                    logging.warning(
-                        f'Could not get video for {quality}, try updating SESSDATA.')
+                    logging.warning(f'Could not get video for {quality}, try updating SESSDATA.')
 
-        title = bilix.utils.legal_title(
-            info.h1_title, info.pages[info.p].p_name)
-        await utils.edit(
-            interaction, content=f'Loading bilibili video `{title}`...')
+        title = bilix.utils.legal_title(info.h1_title, info.pages[info.p].p_name)
+        await utils.edit(interaction, content=f'Loading bilibili video `{title}`...')
 
-        async def load_streams(entry: common.Entry, cancel: asyncio.Event):
+        async def load_streams(entry: common.Entry, cancel: List[asyncio.Event]):
             downloader = bilix.DownloaderBilibili(
                 videos_dir=entry.path, progress=Progress(entry, cancel),
                 sess_data=SESSDATA)

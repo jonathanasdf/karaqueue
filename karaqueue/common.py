@@ -45,7 +45,7 @@ class LoadResult:
     height: int = 0
 
 
-LoadFn = Callable[['Entry', asyncio.Event], Awaitable[LoadResult]]
+LoadFn = Callable[['Entry', List[asyncio.Event]], Awaitable[LoadResult]]
 
 
 @dataclasses.dataclass
@@ -62,7 +62,8 @@ class Entry:
     offset_ms: int
 
     processed: bool = False
-    process_task: Optional[asyncio.Task] = None
+    _process_task: Optional[asyncio.Task] = None
+    _process_task_cancel: Optional[asyncio.Event] = None
     load_msg: str = ''
     error_msg: str = ''
     _load_result: Optional[LoadResult] = None
@@ -78,28 +79,36 @@ class Entry:
 
     def onchange_locked(self) -> None:
         """A change that requires reprocessing the video was made."""
-        if self.process_task is not None:
-            self.process_task.cancel()
-            self.process_task = None
-        self.processed = False
+        self._reset()
         self.load_msg = ''
         self.error_msg = ''
 
-    def get_process_task(self, cancel: asyncio.Event) -> asyncio.Task:
+    def create_process_task(self, global_cancel: asyncio.Event) -> asyncio.Task:
         """Return a task that processes the video."""
-        async def process(cancel: asyncio.Event):
-            await self.process(cancel)
-            self.process_task = None
+        self._reset()
+        cancel = asyncio.Event()
+
+        async def process():
+            logging.info(f"Start processing {self.original_url}")
+            await self._process([global_cancel, cancel])
+            self._process_task = None
             self.processed = True
             logging.info(f'Finished processing {self.original_url}')
-        return asyncio.create_task(process(cancel))
+        self._process_task = asyncio.create_task(process())
+        self._process_task_cancel = cancel
+        return self._process_task
+
+    def _reset(self) -> None:
+        if self._process_task is not None:
+            self._process_task_cancel.set()
+            self._process_task.cancel()
+            self._process_task = None
+        self.processed = False
 
     def delete(self) -> None:
         """Delete everything associated with this entry."""
-        if self.process_task is not None:
-            self.process_task.cancel()
-            self.process_task = None
-        self.processed = False
+        self._reset()
+        self.error_msg = 'Cancelled'
 
     def _get_server_path(self, path: str) -> str:
         """Get external base path of this entry."""
@@ -120,18 +129,18 @@ class Entry:
             raise RuntimeError('task has not been processed!')
         return self._processed_path
 
-    async def process(self, cancel: asyncio.Event) -> None:
+    async def _process(self, cancel: List[asyncio.Event]) -> None:
         """Process the video."""
         if self._load_result is None:
             self._load_result = LoadResult()
             for load_fn in self.load_fns:
                 try:
+                    logging.info('Start load_fn')
                     res = await load_fn(self, cancel)
                 except Exception as err:  # pylint: disable=broad-except
                     logging.exception(err)
                     self.error_msg = f'Error: {err}'
                     return
-                logging.info(f'Got load_result for {self.title}')
                 if res.video_path:
                     self._load_result.video_path = res.video_path
                 if res.audio_path:
@@ -147,8 +156,7 @@ class Entry:
                 '-loglevel quiet -select_streams v:0 -show_entries stream=width,height -of csv=p=0 '
                 f'"{os.path.join(self.path, self._load_result.video_path)}"',
                 return_stdout=True)
-            self._load_result.width, self._load_result.height = map(
-                int, dimensions.split(','))
+            self._load_result.width, self._load_result.height = map(int, dimensions.split(','))
 
         await asyncio.to_thread(self._process_load_result)
 
@@ -162,8 +170,7 @@ class Entry:
             self.load_msg = f'Loading video `{self.title}`...\nShifting pitch...'
             shift_path = os.path.join(self.path, 'shifted.mp3')
             pitch_cents = int(self.pitch_shift * 100)
-            utils.call(
-                'sox', f'"{audio_path}" "{shift_path}" pitch {pitch_cents}')
+            utils.call('sox', f'"{audio_path}" "{shift_path}" pitch {pitch_cents}')
             audio_path = shift_path
 
         video_path = os.path.join(self.path, self._load_result.video_path)
@@ -182,8 +189,7 @@ class Entry:
 
         self.load_msg = f'Loading video `{self.title}`...\nCreating video...'
         self._processed_path = tempfile.mktemp(dir=self.path, suffix='.mp4')
-        utils.call(
-            'ffmpeg', f'{input_flags} -movflags faststart {self._processed_path}')
+        utils.call('ffmpeg', f'{input_flags} -movflags faststart {self._processed_path}')
 
         thumb_path = os.path.join(self.path, 'thumb.jpg')
         if not os.path.exists(thumb_path):

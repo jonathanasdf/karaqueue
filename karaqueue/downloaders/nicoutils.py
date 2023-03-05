@@ -59,8 +59,7 @@ def login(username: str, password: str, session_cookie: str) -> Tuple[requests.S
         }
 
         cookie_jar = session.cookies
-        session.cookies = requests.utils.add_dict_to_cookiejar(
-            cookie_jar, session_dict)
+        session.cookies = requests.utils.add_dict_to_cookiejar(cookie_jar, session_dict)
 
         my_request = session.get(MY_URL)
         my_request.raise_for_status()
@@ -82,8 +81,8 @@ def login(username: str, password: str, session_cookie: str) -> Tuple[requests.S
         otp_requests_made = 0
         while otp_requests_made < 10 and not session.cookies.get_dict().get('user_session', ''):
             if FLAGS.gui and _HAS_TKINTER:
-                otp_code = (simpledialog.askstring(
-                    title='NicoNico OTP', prompt='NicoNico OTP:') or '')
+                otp_code = (
+                    simpledialog.askstring(title='NicoNico OTP', prompt='NicoNico OTP:') or '')
             else:
                 otp_code = input('NicoNico OTP: ')
 
@@ -118,8 +117,7 @@ def get_video_params(session: requests.Session, url: str) -> Any:
         if (params['payment']['video']['isPremium']
                 or params['payment']['video']['isAdmission']
                 or params['payment']['video']['isPpv']):
-            raise RuntimeError(
-                'Video requires payment or membership to download')
+            raise RuntimeError('Video requires payment or membership to download')
         raise RuntimeError('Video media not available for download')
     return params
 
@@ -185,8 +183,7 @@ def _perform_heartbeat(
     while True:
         if stop_heartbeat.is_set():
             break
-        heartbeat_response = session.post(
-            heartbeat_url, data=api_request_el.toxml())
+        heartbeat_response = session.post(heartbeat_url, data=api_request_el.toxml())
         heartbeat_response.raise_for_status()
         time.sleep(DMC_HEARTBEAT_INTERVAL_S)
 
@@ -275,16 +272,14 @@ def _get_video_download_url(session: requests.Session, url: str) -> Tuple[str, t
         """
     root = xml.dom.minidom.parseString(post)
 
-    video_source = _get_highest_quality(
-        params['media']['delivery']['movie']['videos'])
+    video_source = _get_highest_quality(params['media']['delivery']['movie']['videos'])
     sources = root.getElementsByTagName('video_src_ids')[0]
     element = root.createElement('string')
     quality = root.createTextNode(video_source)
     element.appendChild(quality)
     sources.appendChild(element)
 
-    audio_source = _get_highest_quality(
-        params['media']['delivery']['movie']['audios'])
+    audio_source = _get_highest_quality(params['media']['delivery']['movie']['audios'])
     sources = root.getElementsByTagName('audio_src_ids')[0]
     element = root.createElement('string')
     quality = root.createTextNode(audio_source)
@@ -294,8 +289,7 @@ def _get_video_download_url(session: requests.Session, url: str) -> Tuple[str, t
     api_url = (params['media']['delivery']['movie']['session']['urls'][0]['url']
                + '?suppress_response_codes=true&_format=xml')
     headers = {'Content-Type': 'application/xml'}
-    api_response = session.post(
-        api_url, headers=headers, data=root.toxml())
+    api_response = session.post(api_url, headers=headers, data=root.toxml())
     api_response.raise_for_status()
     api_request = xml.dom.minidom.parseString(api_response.text)
 

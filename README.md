@@ -16,6 +16,7 @@ internal_host = <internal ip to serve from, eg. 127.0.0.1>
 host = <public url to host machine>
 serving_dir = <absolute path to write videos to>
 launch_binary = <path to local video player, eg. mpc-hc>
+launch_opts = <options to pass in the launch command>
 
 [NICONICO]
 username = <email address>
@@ -37,7 +38,9 @@ Because Discord refuses to embed video files bigger than a certain size, we expl
 
 The webserver must be accessible from the public internet (so Discord's CDN can read it) and files must be served via the default HTTPS port 443. For some reason Discord does not embed videos served from HTTP links or links with an explicit port eg. `https://my-server:xxxx/blah`, even though they happily embed images from those links. The webserver must support HTTP byte range requests and must send the `accept-ranges: bytes` header for both the `index.html` file as well as for the videos. Feel free to use your existing webserver if it fits these constraints.
 
-`/devset local true` can be used to switch from posting a link to a video on the host to invoking `launch_binary` with the filepath as argument. `dev_user_id` is the only user able to use the `/devset` command.
+`dev_user_id` is the only user able to use the `/dev` command.
+`/dev local` can be used to switch from posting a link to a video on the host to invoking `launch_binary` with the filepath as argument.
+`/dev info` prints out information about all the managed queues.
 
 ```bash
 mkdir _generated_videos
