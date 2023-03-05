@@ -15,6 +15,7 @@ dev_user_id = <your user id>
 internal_host = <internal ip to serve from, eg. 127.0.0.1>
 host = <public url to host machine>
 serving_dir = <absolute path to write videos to>
+player = <type of media player, for local autoplay support. Only mpc-hc for now>
 launch_binary = <path to local video player, eg. mpc-hc>
 launch_opts = <options to pass in the launch command>
 
@@ -24,6 +25,9 @@ password = <base64 encoded password>
 
 [BILIBILI]
 sessdata = <optional SESSDATA cookie>
+
+[MPC-HC]
+webport = <local port for retrieving playback stats>
 ```
 
 3. Install prereqs

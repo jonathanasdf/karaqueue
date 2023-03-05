@@ -19,9 +19,11 @@ _CONFIG_FILE = os.path.join(os.path.dirname(__file__), '..', 'config.ini')
 CONFIG = configparser.ConfigParser()
 CONFIG.read(_CONFIG_FILE)
 
+# config.ini keys
+_DEFAULT = 'DEFAULT'
 
-HOST = CONFIG['DEFAULT'].get('host')
-SERVING_DIR = CONFIG['DEFAULT']['serving_dir']
+HOST = CONFIG[_DEFAULT].get('host')
+SERVING_DIR = CONFIG[_DEFAULT]['serving_dir']
 VIDEO_LIMIT_MINS = 10
 MAX_QUEUED = 20
 MAX_QUEUED_PER_USER = 2
@@ -303,4 +305,17 @@ class Downloader:
         self, interaction: discord.Interaction, url: str, *, video: bool, audio: bool,
     ) -> DownloadResult:
         """Return a loader function for the url."""
+        raise NotImplementedError()
+
+
+@dataclasses.dataclass
+class PlayerStatus:
+    """The current status of a media player."""
+
+
+class Player:
+    """A local media player."""
+
+    def get_status(self) -> PlayerStatus:
+        """Returns the current status of the player."""
         raise NotImplementedError()

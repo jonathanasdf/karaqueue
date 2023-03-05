@@ -8,7 +8,7 @@ import pathlib
 import signal
 import tempfile
 import typing
-from typing import List, Optional
+from typing import Optional
 from absl import app
 from absl import flags
 import discord
@@ -16,10 +16,8 @@ from discord.ext import commands
 
 from karaqueue import common
 from karaqueue import utils
-from karaqueue.downloaders import bilibili
-from karaqueue.downloaders import niconico
-from karaqueue.downloaders import soundcloud
-from karaqueue.downloaders import youtube
+from karaqueue import downloaders
+from karaqueue import players
 
 
 FLAGS = flags.FLAGS
@@ -35,8 +33,7 @@ def setup_logging():
     datefmt = '%Y-%m-%d %H:%M:%S'
     formatter = logging.Formatter(fmt, datefmt)
     logging.basicConfig(level=logging.INFO, format=fmt, datefmt=datefmt)
-    file_handler = logging.FileHandler(
-        os.path.join(os.path.dirname(__file__), 'main.log'))
+    file_handler = logging.FileHandler(os.path.join(os.path.dirname(__file__), 'main.log'))
     file_handler.formatter = formatter
     logging.getLogger().addHandler(file_handler)
 
@@ -44,10 +41,15 @@ def setup_logging():
 setup_logging()
 
 
-BOT_TOKEN = common.CONFIG['DEFAULT']['token']
-DEV_USER_ID = common.CONFIG['DEFAULT'].get('dev_user_id')
-LAUNCH_BINARY = common.CONFIG['DEFAULT'].get('launch_binary')
-LAUNCH_OPTS = common.CONFIG['DEFAULT'].get('launch_opts')
+# config.ini keys
+_DEFAULT = 'DEFAULT'
+_TOKEN = 'token'
+
+BOT_TOKEN = common.CONFIG[_DEFAULT][_TOKEN]
+DEV_USER_ID = common.CONFIG[_DEFAULT].get('dev_user_id')
+PLAYER = common.CONFIG[_DEFAULT].get('player')
+LAUNCH_BINARY = common.CONFIG[_DEFAULT].get('launch_binary')
+LAUNCH_OPTS = common.CONFIG[_DEFAULT].get('launch_opts')
 
 
 os.makedirs(common.SERVING_DIR, exist_ok=True)
@@ -155,14 +157,6 @@ async def send_add_song_modal(ctx: discord.ApplicationContext):
     await ctx.send_modal(AddSongModal(title='Add Song'))
 
 
-_downloaders: List[common.Downloader] = [
-    youtube.YoutubeDownloader(),
-    niconico.NicoNicoDownloader(),
-    bilibili.BilibiliDownloader(),
-    soundcloud.SoundcloudDownloader(),
-]
-
-
 async def _load(
     interaction: discord.Interaction, video_url: str, audio_url: str, pitch: int, offset_ms: int,
 ):
@@ -189,7 +183,7 @@ async def _load(
     path = tempfile.mkdtemp(dir=pathlib.PurePath(common.SERVING_DIR))
 
     async def download(url: str, *, video: bool, audio: bool) -> common.DownloadResult:
-        for downloader in _downloaders:
+        for downloader in downloaders.all:
             if downloader.match(url):
                 logging.info(f'Loading {url}...')
                 return await downloader.load(interaction, url, video=video, audio=audio)
@@ -334,8 +328,7 @@ async def _next(ctx: utils.DiscordContext):
             return
         if karaqueue.current is not None:
             karaqueue.current.delete()
-        karaqueue.next_advance_time = (
-            now + datetime.timedelta(seconds=common.ADVANCE_BUFFER_SECS))
+        karaqueue.next_advance_time = now + datetime.timedelta(seconds=common.ADVANCE_BUFFER_SECS)
         karaqueue.current = karaqueue.pop(0)
     await _update_with_current(ctx)
 
@@ -373,8 +366,7 @@ async def _update_with_current(ctx: utils.DiscordContext):
         await resp.edit(content=f'**Now playing**\n[`{entry.name}`](<{entry.original_url}>)')
         args = f'"{entry.video_path()}"'
         if LAUNCH_OPTS:
-            args += f' "{LAUNCH_OPTS}"'
-        logging.info(f'Launching {LAUNCH_BINARY} {args}')
+            args += f' {LAUNCH_OPTS}'
         utils.call(LAUNCH_BINARY, args, background=True)
     else:
         await resp.edit(
@@ -536,6 +528,14 @@ def main(_):
                     continue
             await entry_to_process.create_process_task(global_cancel)
     bot.loop.create_task(background_process())
+
+    if PLAYER:
+        player = players.player_lookup[PLAYER]
+        async def monitor_player():
+            while True:
+                logging.info(player.get_status())
+                await asyncio.sleep(10)
+        bot.loop.create_task(monitor_player())
 
     bot.run(BOT_TOKEN)
 

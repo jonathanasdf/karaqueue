@@ -13,9 +13,15 @@ from karaqueue import utils
 from karaqueue.downloaders import nicoutils
 
 
-USERNAME = common.CONFIG['NICONICO']['username']
-PASSWORD = base64.b64decode(common.CONFIG['NICONICO']['password']).decode('utf-8')
-SESSION_COOKIE = common.CONFIG['NICONICO'].get('session', '')
+# config.ini keys
+_SECTION = 'NICONICO'
+_USERNAME = 'username'
+_PASSWORD = 'password'
+_SESSION = 'session'
+
+USERNAME = common.CONFIG.get(_SECTION, _USERNAME, fallback=None)
+PASSWORD = base64.b64decode(common.CONFIG.get(_SECTION, _PASSWORD, fallback='')).decode('utf-8')
+SESSION_COOKIE = common.CONFIG.get(_SECTION, _SESSION, fallback='')
 
 
 def update_session_cookie(session_cookie: str) -> None:
@@ -23,7 +29,7 @@ def update_session_cookie(session_cookie: str) -> None:
     global SESSION_COOKIE  # pylint: disable=global-statement
     if SESSION_COOKIE != session_cookie:
         SESSION_COOKIE = session_cookie
-        common.CONFIG['NICONICO']['session'] = SESSION_COOKIE
+        common.CONFIG.set(_SECTION, _SESSION, SESSION_COOKIE)
         common.update_config_file()
 
 

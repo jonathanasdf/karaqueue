@@ -14,7 +14,11 @@ from karaqueue import common
 from karaqueue import utils
 
 
-SESSDATA = common.CONFIG['BILIBILI'].get('SESSDATA', '')
+# config.ini keys
+_SECTION = 'NICONICO'
+_SESSDATA = 'SESSDATA'
+
+SESSDATA = common.CONFIG.get(_SECTION, _SESSDATA, fallback='')
 
 
 class Progress(bilix.progress.CLIProgress):
