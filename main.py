@@ -3,6 +3,7 @@ import asyncio
 import datetime
 import itertools
 import logging
+import math
 import os
 import pathlib
 import signal
@@ -56,6 +57,7 @@ os.makedirs(common.SERVING_DIR, exist_ok=True)
 
 
 # A new video is queued for offline processing.
+global_cancel = asyncio.Event()
 new_process_task = asyncio.Condition()
 
 
@@ -215,11 +217,15 @@ async def _load(
         offset_ms=offset_ms)
     async with karaqueue.lock:
         karaqueue.append(entry)
-        await print_queue_locked(interaction, karaqueue)
-        entry.onchange_locked()
-        async with new_process_task:
-            new_process_task.notify()
+        if karaqueue.current is not None:
+            await print_queue_locked(interaction, karaqueue)
+            entry.onchange_locked()
+            async with new_process_task:
+                new_process_task.notify()
+    # Delete the loading message.
     await interaction.delete_original_response()
+    if karaqueue.current is None:
+        await _next(interaction)
 
 
 @bot.slash_command(name='pitch')
@@ -317,19 +323,22 @@ async def _next(ctx: utils.DiscordContext):
     """Play the next song."""
     karaqueue = await common.get_queue(ctx)
     async with karaqueue.lock:
+        now = datetime.datetime.now()
+        if karaqueue.next_advance_time is not None and now < karaqueue.next_advance_time:
+            diff = math.ceil((karaqueue.next_advance_time - now).microseconds / 1e6)
+            msg = f'A new song just started! The next button will be enabled in {diff}s.'
+            await utils.respond(ctx, content=msg, ephemeral=True)
+            return
+        karaqueue.next_advance_time = now + datetime.timedelta(seconds=common.ADVANCE_BUFFER_SECS)
+        if karaqueue.current is not None:
+            karaqueue.current.delete()
+            karaqueue.current = None
         if len(karaqueue) == 0:
             await utils.respond(ctx, content='No songs in queue!')
             return
-        now = datetime.datetime.now()
-        if karaqueue.next_advance_time is not None and now < karaqueue.next_advance_time:
-            diff = karaqueue.next_advance_time - now
-            msg = f'A new song just started! The next button will be enabled in {diff.seconds}s.'
-            await utils.respond(ctx, content=msg, ephemeral=True)
-            return
-        if karaqueue.current is not None:
-            karaqueue.current.delete()
-        karaqueue.next_advance_time = now + datetime.timedelta(seconds=common.ADVANCE_BUFFER_SECS)
         karaqueue.current = karaqueue.pop(0)
+        async with new_process_task:
+            new_process_task.notify()
     await _update_with_current(ctx)
 
 
@@ -368,6 +377,24 @@ async def _update_with_current(ctx: utils.DiscordContext):
         if LAUNCH_OPTS:
             args += f' {LAUNCH_OPTS}'
         utils.call(LAUNCH_BINARY, args, background=True)
+
+        if PLAYER:
+            async def monitor_player():
+                await asyncio.sleep(10)
+                player = players.player_lookup[PLAYER]
+                while True:
+                    if global_cancel.is_set():
+                        raise asyncio.CancelledError()
+                    status = await player.get_status()
+                    sleep_time = 10
+                    if status is not None:
+                        if status.position == status.duration:
+                            bot.loop.create_task(_next(ctx))
+                            return
+                        if status.duration - status.position < 10000:
+                            sleep_time = (status.duration - status.position) / 1000.0 + 0.2
+                    await asyncio.sleep(sleep_time)
+            entry.player_monitor_task = bot.loop.create_task(monitor_player())
     else:
         await resp.edit(
             content=(f'**Now playing**\n[`{entry.name}`](<{entry.original_url}>)'
@@ -450,6 +477,7 @@ async def is_dev(ctx: commands.Context) -> bool:
 @commands.check(is_dev)
 async def command_dev(ctx: discord.ApplicationContext, command: str):
     """Dev commands."""
+    karaqueue = await common.get_queue(ctx)
     if command == 'info':
         key = await common.get_queue_key(ctx)
         msg = f'Current queue: {key}'
@@ -459,9 +487,15 @@ async def command_dev(ctx: discord.ApplicationContext, command: str):
             contents = queue.format()
             if contents:
                 msg = msg + f'\n{contents}'
+        if karaqueue.local and PLAYER:
+            player = players.player_lookup[PLAYER]
+            status = await player.get_status()
+            if status is None:
+                msg = msg + '\nLocal player not active.'
+            else:
+                msg = msg + f'\n{status}'
         await utils.respond(ctx, content=msg, ephemeral=True)
     elif command == 'local':
-        karaqueue = await common.get_queue(ctx)
         karaqueue.local = not karaqueue.local
         await utils.respond(ctx, content='Success', ephemeral=True)
     else:
@@ -501,8 +535,6 @@ async def print_queue_locked(ctx: utils.DiscordContext, karaqueue: common.Queue)
 
 def main(_):
     """Main."""
-    global_cancel = asyncio.Event()
-
     def interrupt(*_):
         global_cancel.set()
         bot.loop.stop()
@@ -527,17 +559,11 @@ def main(_):
                 if entry_to_process is None:
                     await new_process_task.wait()
                     continue
-            await entry_to_process.create_process_task(global_cancel)
+            try:
+                await entry_to_process.create_process_task(bot.loop, global_cancel)
+            except asyncio.CancelledError:
+                pass
     bot.loop.create_task(background_process())
-
-    if PLAYER:
-        player = players.player_lookup[PLAYER]
-        async def monitor_player():
-            while True:
-                logging.info(player.get_status())
-                await asyncio.sleep(10)
-        bot.loop.create_task(monitor_player())
-
     bot.run(BOT_TOKEN)
 
 

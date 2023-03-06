@@ -24,7 +24,7 @@ _DEFAULT = 'DEFAULT'
 
 HOST = CONFIG[_DEFAULT].get('host')
 SERVING_DIR = CONFIG[_DEFAULT]['serving_dir']
-ALLOWED_GUILDIDS = map(int, CONFIG[_DEFAULT]['allowed_guildids'].split(','))
+ALLOWED_GUILDIDS = list(map(int, CONFIG[_DEFAULT]['allowed_guildids'].strip().split(',')))
 DEV_CONTACT = CONFIG[_DEFAULT]['dev_contact']
 
 VIDEO_LIMIT_MINS = 10
@@ -32,7 +32,7 @@ MAX_QUEUED = 20
 MAX_QUEUED_PER_USER = 2
 
 # Number of seconds after a new video started playing before the next button can be used.
-ADVANCE_BUFFER_SECS = 10
+ADVANCE_BUFFER_SECS = 0
 
 
 def update_config_file() -> None:
@@ -67,12 +67,13 @@ class Entry:
     offset_ms: int
 
     processed: bool = False
-    _process_task: Optional[asyncio.Task] = None
     _process_task_cancel: Optional[asyncio.Event] = None
     load_msg: str = ''
     error_msg: str = ''
     _load_result: Optional[LoadResult] = None
     _processed_path: str = ''
+
+    player_monitor_task: Optional[asyncio.Task] = None
 
     @property
     def name(self) -> str:
@@ -88,26 +89,28 @@ class Entry:
         self.load_msg = ''
         self.error_msg = ''
 
-    def create_process_task(self, global_cancel: asyncio.Event) -> asyncio.Task:
+    def create_process_task(
+        self, loop: asyncio.AbstractEventLoop, global_cancel: asyncio.Event,
+    ) -> asyncio.Task:
         """Return a task that processes the video."""
         self._reset()
         cancel = asyncio.Event()
 
         async def process():
-            logging.info(f"Start processing {self.original_url}")
+            logging.info(f'Start processing {self.original_url}')
             await self._process([global_cancel, cancel])
-            self._process_task = None
             self.processed = True
             logging.info(f'Finished processing {self.original_url}')
-        self._process_task = asyncio.create_task(process())
         self._process_task_cancel = cancel
-        return self._process_task
+        return loop.create_task(process())
 
     def _reset(self) -> None:
-        if self._process_task is not None:
+        if self._process_task_cancel is not None:
             self._process_task_cancel.set()
-            self._process_task.cancel()
-            self._process_task = None
+            self._process_task_cancel = None
+        if self.player_monitor_task is not None:
+            self.player_monitor_task.cancel()
+            self.player_monitor_task = None
         self.processed = False
 
     def delete(self) -> None:
@@ -140,8 +143,9 @@ class Entry:
             self._load_result = LoadResult()
             for load_fn in self.load_fns:
                 try:
-                    logging.info('Start load_fn')
                     res = await load_fn(self, cancel)
+                except asyncio.CancelledError:  # pylint: disable=try-except-raise
+                    raise
                 except Exception as err:  # pylint: disable=broad-except
                     logging.exception(err)
                     self.error_msg = f'Error: {err}'
@@ -155,6 +159,10 @@ class Entry:
                 if res.height:
                     self._load_result.height = res.height
 
+        for event in cancel:
+            if event.is_set():
+                raise asyncio.CancelledError()
+
         if self._load_result.width == 0 or self._load_result.height == 0:
             dimensions = utils.call(
                 'ffprobe',
@@ -163,9 +171,9 @@ class Entry:
                 return_stdout=True)
             self._load_result.width, self._load_result.height = map(int, dimensions.split(','))
 
-        await asyncio.to_thread(self._process_load_result)
+        await asyncio.to_thread(self._process_load_result, cancel)
 
-    def _process_load_result(self) -> None:
+    def _process_load_result(self, cancel: List[asyncio.Event]) -> None:
         if self.queue is None:
             raise ValueError('Queue reference not set!')
         if self._load_result is None:
@@ -177,6 +185,10 @@ class Entry:
             pitch_cents = int(self.pitch_shift * 100)
             utils.call('sox', f'"{audio_path}" "{shift_path}" pitch {pitch_cents}')
             audio_path = shift_path
+
+        for event in cancel:
+            if event.is_set():
+                raise asyncio.CancelledError()
 
         video_path = os.path.join(self.path, self._load_result.video_path)
 
@@ -195,6 +207,10 @@ class Entry:
         self.load_msg = f'Loading video `{self.title}`...\nCreating video...'
         self._processed_path = tempfile.mktemp(dir=self.path, suffix='.mp4')
         utils.call('ffmpeg', f'{input_flags} -movflags faststart {self._processed_path}')
+
+        for event in cancel:
+            if event.is_set():
+                raise asyncio.CancelledError()
 
         thumb_path = os.path.join(self.path, 'thumb.jpg')
         if not os.path.exists(thumb_path):
@@ -319,11 +335,13 @@ class Downloader:
 @dataclasses.dataclass
 class PlayerStatus:
     """The current status of a media player."""
+    position: int  # Current position in ms
+    duration: int  # Total duration in ms
 
 
 class Player:
     """A local media player."""
 
-    def get_status(self) -> PlayerStatus:
+    async def get_status(self) -> Optional[PlayerStatus]:
         """Returns the current status of the player."""
         raise NotImplementedError()
