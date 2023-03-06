@@ -11,6 +11,8 @@ This project implements a Discord bot that manages a queue for a local karaoke s
 ```dosini
 [DEFAULT]
 token = <discord bot token>
+allowed_guildids = <comma-separated list of guildids allowed to use the bot>
+dev_contact = <your contact info>
 dev_user_id = <your user id>
 internal_host = <internal ip to serve from, eg. 127.0.0.1>
 host = <public url to host machine>

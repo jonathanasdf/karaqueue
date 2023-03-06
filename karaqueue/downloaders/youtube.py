@@ -73,7 +73,8 @@ class YoutubeDownloader(common.Downloader):
                         raise asyncio.CancelledError()
                 downloaded = stream.filesize - remaining_bytes
                 if audio_stream is not None and stream.includes_video_track:
-                    # The video stream is downloaded after the audio stream, and share the same progress bar.
+                    # The video stream is downloaded after the audio stream,
+                    # and share the same progress bar.
                     downloaded += audio_stream.filesize
                 progress = StringProgressBar.progressBar.filledBar(
                     total_size, downloaded)  # type: ignore

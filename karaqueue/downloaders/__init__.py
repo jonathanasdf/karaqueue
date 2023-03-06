@@ -4,7 +4,7 @@ from karaqueue.downloaders import niconico
 from karaqueue.downloaders import soundcloud
 from karaqueue.downloaders import youtube
 
-all = [
+all_downloaders = [
     bilibili.BilibiliDownloader(),
     niconico.NicoNicoDownloader(),
     soundcloud.SoundcloudDownloader(),

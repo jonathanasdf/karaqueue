@@ -166,7 +166,7 @@ async def _load(
         return
     video_url = video_url.strip()
     audio_url = audio_url.strip()
-    karaqueue = common.get_queue(interaction.guild_id, interaction.channel_id)
+    karaqueue = await common.get_queue(interaction)
     async with karaqueue.lock:
         if len(karaqueue) >= common.MAX_QUEUED:
             await utils.respond(
@@ -183,7 +183,7 @@ async def _load(
     path = tempfile.mkdtemp(dir=pathlib.PurePath(common.SERVING_DIR))
 
     async def download(url: str, *, video: bool, audio: bool) -> common.DownloadResult:
-        for downloader in downloaders.all:
+        for downloader in downloaders.all_downloaders:
             if downloader.match(url):
                 logging.info(f'Loading {url}...')
                 return await downloader.load(interaction, url, video=video, audio=audio)
@@ -225,7 +225,7 @@ async def _load(
 @bot.slash_command(name='pitch')
 async def command_pitch(ctx: discord.ApplicationContext, pitch: int, index: int = 0):
     """Change the pitch of a song."""
-    karaqueue = common.get_queue(ctx.guild_id, ctx.channel_id)
+    karaqueue = await common.get_queue(ctx)
     current_updated = False
     async with karaqueue.lock:
         if index < 0 or index > len(karaqueue):
@@ -258,7 +258,7 @@ async def command_offset(
     ctx: discord.ApplicationContext, offset_ms: int, index: Optional[int] = None,
 ):
     """Change the offset of a song."""
-    karaqueue = common.get_queue(ctx.guild_id, ctx.channel_id)
+    karaqueue = await common.get_queue(ctx)
     current_updated = False
     async with karaqueue.lock:
         if index is None:
@@ -302,7 +302,7 @@ async def command_offset(
 @bot.slash_command(name='list')
 async def command_list(ctx: discord.ApplicationContext):
     """Show the queue."""
-    karaqueue = common.get_queue(ctx.guild_id, ctx.channel_id)
+    karaqueue = await common.get_queue(ctx)
     async with karaqueue.lock:
         await print_queue_locked(ctx, karaqueue)
 
@@ -315,7 +315,7 @@ async def command_next(ctx: discord.ApplicationContext):
 
 async def _next(ctx: utils.DiscordContext):
     """Play the next song."""
-    karaqueue = common.get_queue(ctx.guild_id, ctx.channel_id)
+    karaqueue = await common.get_queue(ctx)
     async with karaqueue.lock:
         if len(karaqueue) == 0:
             await utils.respond(ctx, content='No songs in queue!')
@@ -335,7 +335,7 @@ async def _next(ctx: utils.DiscordContext):
 
 async def _update_with_current(ctx: utils.DiscordContext):
     """Update the currently playing song in the queue."""
-    karaqueue = common.get_queue(ctx.guild_id, ctx.channel_id)
+    karaqueue = await common.get_queue(ctx)
     entry = karaqueue.current
     if entry is None:
         return
@@ -388,7 +388,7 @@ async def command_remove(ctx: discord.ApplicationContext, index: int):
 
 async def _delete(ctx: discord.ApplicationContext, index: int):
     """Delete a song from the queue."""
-    karaqueue = common.get_queue(ctx.guild_id, ctx.channel_id)
+    karaqueue = await common.get_queue(ctx)
     async with karaqueue.lock:
         if index < 1 or index > len(karaqueue):
             await utils.respond(ctx, 'Invalid index!', ephemeral=True)
@@ -425,7 +425,7 @@ async def _delete(ctx: discord.ApplicationContext, index: int):
 @bot.slash_command(name='move')
 async def command_move(ctx: discord.ApplicationContext, index_from: int, index_to: int):
     """Change the position of a song in the queue."""
-    karaqueue = common.get_queue(ctx.guild_id, ctx.channel_id)
+    karaqueue = await common.get_queue(ctx)
     async with karaqueue.lock:
         if (index_from < 1 or index_from > len(karaqueue)
                 or index_to < 1 or index_to > len(karaqueue)):
@@ -451,7 +451,8 @@ async def is_dev(ctx: commands.Context) -> bool:
 async def command_dev(ctx: discord.ApplicationContext, command: str):
     """Dev commands."""
     if command == 'info':
-        msg = f'Current queue: {common.get_queue_key(ctx.guild_id, ctx.channel_id)}'
+        key = await common.get_queue_key(ctx)
+        msg = f'Current queue: {key}'
         msg = msg + '\nAll queues:'
         for queue_key, queue in common.karaqueue.items():
             msg = msg + f'\n{queue_key}'
@@ -460,7 +461,7 @@ async def command_dev(ctx: discord.ApplicationContext, command: str):
                 msg = msg + f'\n{contents}'
         await utils.respond(ctx, content=msg, ephemeral=True)
     elif command == 'local':
-        karaqueue = common.get_queue(ctx.guild_id, ctx.channel_id)
+        karaqueue = await common.get_queue(ctx)
         karaqueue.local = not karaqueue.local
         await utils.respond(ctx, content='Success', ephemeral=True)
     else:

@@ -24,6 +24,9 @@ _DEFAULT = 'DEFAULT'
 
 HOST = CONFIG[_DEFAULT].get('host')
 SERVING_DIR = CONFIG[_DEFAULT]['serving_dir']
+ALLOWED_GUILDIDS = map(int, CONFIG[_DEFAULT]['allowed_guildids'].split(','))
+DEV_CONTACT = CONFIG[_DEFAULT]['dev_contact']
+
 VIDEO_LIMIT_MINS = 10
 MAX_QUEUED = 20
 MAX_QUEUED_PER_USER = 2
@@ -269,20 +272,25 @@ class Queue:
 karaqueue: Dict[Tuple[int, int], Queue] = {}
 
 
-def get_queue_key(guild_id: Optional[int], channel_id: Optional[int]) -> Tuple[int, int]:
+async def get_queue_key(ctx: utils.DiscordContext) -> Tuple[int, int]:
     """Get the queue key corresponding to the given guild and channel."""
+    guild_id = ctx.guild_id
+    channel_id = ctx.channel_id
     if guild_id is None or channel_id is None:
-        raise ValueError('guild_id or channel_id is None')
-    return int(guild_id), int(channel_id)
+        await utils.respond(ctx, content='Error: guild_id or channel_id is None', ephemeral=True)
+        raise ValueError(f'guild_id or channel_id is None: {guild_id} {channel_id}')
+    return guild_id, channel_id
 
 
-def get_queue(guild_id: Optional[int], channel_id: Optional[int]) -> Queue:
+async def get_queue(ctx: utils.DiscordContext) -> Queue:
     """Get the queue corresponding to the given guild and channel."""
-    if guild_id is None or channel_id is None:
-        raise ValueError('guild_id or channel_id is None')
-    key = get_queue_key(guild_id, channel_id)
+    key = await get_queue_key(ctx)
+    if key[0] not in ALLOWED_GUILDIDS:
+        msg = f'This server is not allowed to use this bot. Please contact {DEV_CONTACT}.'
+        await utils.respond(ctx, content=f'Error: {msg}', ephemeral=True)
+        raise ValueError(f'{msg}: {key[0]}')
     if key not in karaqueue:
-        karaqueue[key] = Queue(guild_id=guild_id, channel_id=channel_id)
+        karaqueue[key] = Queue(guild_id=key[0], channel_id=key[1])
     return karaqueue[key]
 
 
