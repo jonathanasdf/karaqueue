@@ -225,6 +225,7 @@ async def _load(
             async with new_process_task:
                 new_process_task.notify()
         else:
+            logging.info('Next called from load because nothing is playing.')
             await _next_locked(interaction, karaqueue, is_user_action=False)
 
 
@@ -316,6 +317,7 @@ async def command_list(ctx: discord.ApplicationContext):
 @bot.slash_command(name='next')
 async def command_next(ctx: discord.ApplicationContext):
     """Play the next song."""
+    logging.info('Next called from command.')
     await _next(ctx, is_user_action=True)
 
 
@@ -405,6 +407,7 @@ async def _update_with_current(ctx: utils.DiscordContext, delete_old_queue_msg: 
                                 playback_started = True
                             if (status.position == status.duration or
                                     (playback_started and status.position == 0)):
+                                logging.info('Next called from local video playback end.')
                                 bot.loop.create_task(_next(ctx, is_user_action=False))
                                 return
                             if status.duration - status.position < 10000:
@@ -545,6 +548,7 @@ async def print_queue_locked(
             @discord.ui.button(label='Next', style=discord.ButtonStyle.primary)
             async def next_callback(self, _, __):
                 """Play the next song."""
+                logging.info('Next called from button click.')
                 await _next(ctx, is_user_action=True)
 
         msg = await utils.respond(ctx, f'**Up Next**\n{karaqueue.format()}', view=QueueView())
