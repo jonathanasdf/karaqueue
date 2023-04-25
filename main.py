@@ -345,18 +345,18 @@ async def _next(ctx: utils.DiscordContext):
 async def _update_with_current(ctx: utils.DiscordContext, delete_old_queue_msg: bool = True):
     """Update the currently playing song in the queue."""
     karaqueue = await common.get_queue(ctx)
-    entry = karaqueue.current
-    if entry is None:
-        return
     if karaqueue.local and not LAUNCH_BINARY:
         await utils.respond(
             ctx, content='launch_binary must be configured for local mode.', ephemeral=True)
         return
+    async with karaqueue.lock:
+        entry = karaqueue.current
+        if entry is None:
+            return
+        await print_queue_locked(ctx, karaqueue, delete_old_queue_msg)
     resp = await utils.respond(ctx, content=f'Loading `{entry.name}`...')
     if isinstance(resp, discord.Interaction):
         resp = await resp.original_response()
-    async with karaqueue.lock:
-        await print_queue_locked(ctx, karaqueue, delete_old_queue_msg)
     spinner = itertools.cycle(['|', '/', '-', '\\'])
     cur_msg = ''
     while not entry.processed:
