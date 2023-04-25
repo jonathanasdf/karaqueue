@@ -34,7 +34,8 @@ def setup_logging():
     datefmt = '%Y-%m-%d %H:%M:%S'
     formatter = logging.Formatter(fmt, datefmt)
     logging.basicConfig(level=logging.INFO, format=fmt, datefmt=datefmt)
-    file_handler = logging.FileHandler(os.path.join(os.path.dirname(__file__), 'main.log'))
+    file_handler = logging.FileHandler(
+        os.path.join(os.path.dirname(__file__), 'main.log'))
     file_handler.formatter = formatter
     logging.getLogger().addHandler(file_handler)
 
@@ -166,6 +167,7 @@ async def _load(
     user = interaction.user
     if user is None:
         return
+    await utils.respond(interaction, 'Loading...', ephemeral=True)
     video_url = video_url.strip()
     audio_url = audio_url.strip()
     karaqueue = await common.get_queue(interaction)
@@ -215,6 +217,8 @@ async def _load(
         user_id=user.id,
         pitch_shift=pitch,
         offset_ms=offset_ms)
+    # Delete the loading message.
+    await interaction.delete_original_response()
     async with karaqueue.lock:
         karaqueue.append(entry)
         if karaqueue.current is not None:
@@ -222,10 +226,8 @@ async def _load(
             entry.onchange_locked()
             async with new_process_task:
                 new_process_task.notify()
-    # Delete the loading message.
-    await interaction.delete_original_response()
-    if karaqueue.current is None:
-        await _next(interaction)
+        else:
+            await _next_locked(interaction, karaqueue, is_user_action=False)
 
 
 @bot.slash_command(name='pitch')
@@ -316,30 +318,37 @@ async def command_list(ctx: discord.ApplicationContext):
 @bot.slash_command(name='next')
 async def command_next(ctx: discord.ApplicationContext):
     """Play the next song."""
-    await _next(ctx)
+    await _next(ctx, is_user_action=True)
 
 
-async def _next(ctx: utils.DiscordContext):
+async def _next(ctx: utils.DiscordContext, is_user_action: bool):
     """Play the next song."""
     karaqueue = await common.get_queue(ctx)
     async with karaqueue.lock:
-        now = datetime.datetime.now()
-        if karaqueue.next_advance_time is not None and now < karaqueue.next_advance_time:
-            diff = math.ceil((karaqueue.next_advance_time - now).microseconds / 1e6)
+        await _next_locked(ctx, karaqueue, is_user_action=is_user_action)
+
+
+async def _next_locked(ctx: utils.DiscordContext, karaqueue: common.Queue, is_user_action: bool):
+    """Play the next song."""
+    now = datetime.datetime.now()
+    if karaqueue.next_advance_time is not None and now < karaqueue.next_advance_time:
+        if is_user_action:
+            diff = math.ceil(
+                (karaqueue.next_advance_time - now).microseconds / 1e6)
             msg = f'A new song just started! The next button will be enabled in {diff}s.'
             await utils.respond(ctx, content=msg, ephemeral=True)
-            return
-        karaqueue.next_advance_time = now + datetime.timedelta(seconds=common.ADVANCE_BUFFER_SECS)
-        if karaqueue.current is not None:
-            karaqueue.current.delete()
-            karaqueue.current = None
-        if len(karaqueue) == 0:
-            await utils.respond(ctx, content='No songs in queue!')
-            return
-        karaqueue.current = karaqueue.pop(0)
-        async with new_process_task:
-            new_process_task.notify()
-    await _update_with_current(ctx, delete_old_queue_msg=False)
+        return
+    karaqueue.next_advance_time = now + datetime.timedelta(seconds=common.ADVANCE_BUFFER_SECS)
+    if karaqueue.current is not None:
+        karaqueue.current.delete()
+        karaqueue.current = None
+    if len(karaqueue) == 0:
+        await utils.respond(ctx, content='No songs in queue!')
+        return
+    karaqueue.current = karaqueue.pop(0)
+    async with new_process_task:
+        new_process_task.notify()
+    bot.loop.create_task(_update_with_current(ctx))
 
 
 async def _update_with_current(ctx: utils.DiscordContext, delete_old_queue_msg: bool = True):
@@ -398,10 +407,11 @@ async def _update_with_current(ctx: utils.DiscordContext, delete_old_queue_msg: 
                                 playback_started = True
                             if (status.position == status.duration or
                                     (playback_started and status.position == 0)):
-                                bot.loop.create_task(_next(ctx))
+                                bot.loop.create_task(_next(ctx, is_user_action=False))
                                 return
                             if status.duration - status.position < 10000:
-                                sleep_time = (status.duration - status.position) / 1000.0 + 0.2
+                                sleep_time = (status.duration -
+                                              status.position) / 1000.0 + 0.2
                         elif playback_started:
                             # Somehow we're on the next song already, stop waiting.
                             return
@@ -537,7 +547,7 @@ async def print_queue_locked(
             @discord.ui.button(label='Next', style=discord.ButtonStyle.primary)
             async def next_callback(self, _, __):
                 """Play the next song."""
-                await _next(ctx)
+                await _next(ctx, is_user_action=True)
 
         msg = await utils.respond(ctx, f'**Up Next**\n{karaqueue.format()}', view=QueueView())
 
