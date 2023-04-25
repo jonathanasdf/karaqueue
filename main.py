@@ -396,7 +396,7 @@ async def _update_with_current(ctx: utils.DiscordContext, delete_old_queue_msg: 
                     if global_cancel.is_set():
                         raise asyncio.CancelledError()
                     await asyncio.sleep(sleep_time)
-                    sleep_time = 10
+                    sleep_time = 5
                     try:
                         status = await player.get_status()
                     except Exception:  # pylint: disable=broad-exception-caught
@@ -409,7 +409,7 @@ async def _update_with_current(ctx: utils.DiscordContext, delete_old_queue_msg: 
                                 return
                             if status.position > 0 and status.position < status.duration:
                                 playback_started = True
-                            if status.duration - status.position < 10000:
+                            if status.duration - status.position < 5000:
                                 sleep_time = (status.duration - status.position) / 1000.0 + 0.2
                         elif playback_started:
                             # Somehow we're on the next song already, stop waiting.
