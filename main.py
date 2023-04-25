@@ -339,10 +339,10 @@ async def _next(ctx: utils.DiscordContext):
         karaqueue.current = karaqueue.pop(0)
         async with new_process_task:
             new_process_task.notify()
-    await _update_with_current(ctx)
+    await _update_with_current(ctx, delete_old_queue_msg=False)
 
 
-async def _update_with_current(ctx: utils.DiscordContext):
+async def _update_with_current(ctx: utils.DiscordContext, delete_old_queue_msg: bool = True):
     """Update the currently playing song in the queue."""
     karaqueue = await common.get_queue(ctx)
     entry = karaqueue.current
@@ -356,7 +356,7 @@ async def _update_with_current(ctx: utils.DiscordContext):
     if isinstance(resp, discord.Interaction):
         resp = await resp.original_response()
     async with karaqueue.lock:
-        await print_queue_locked(ctx, karaqueue)
+        await print_queue_locked(ctx, karaqueue, delete_old_queue_msg)
     spinner = itertools.cycle(['|', '/', '-', '\\'])
     cur_msg = ''
     while not entry.processed:
@@ -381,6 +381,7 @@ async def _update_with_current(ctx: utils.DiscordContext):
         if PLAYER:
             async def monitor_player():
                 player = players.player_lookup[PLAYER]
+                playback_started = False
                 sleep_time = 1
                 while True:
                     if global_cancel.is_set():
@@ -393,11 +394,17 @@ async def _update_with_current(ctx: utils.DiscordContext):
                         continue
                     if status is not None:
                         if status.filename == os.path.basename(entry.video_path()):
-                            if status.position == status.duration:
+                            if status.position > 0:
+                                playback_started = True
+                            if (status.position == status.duration or
+                                    (playback_started and status.position == 0)):
                                 bot.loop.create_task(_next(ctx))
                                 return
                             if status.duration - status.position < 10000:
                                 sleep_time = (status.duration - status.position) / 1000.0 + 0.2
+                        elif playback_started:
+                            # Somehow we're on the next song already, stop waiting.
+                            return
             entry.player_monitor_task = bot.loop.create_task(monitor_player())
     else:
         await resp.edit(
@@ -442,7 +449,7 @@ async def _delete(ctx: discord.ApplicationContext, index: int):
                         del karaqueue[i]
                         break
                 await utils.respond(ctx, f'Successfully deleted `{entry.title}` from the queue.')
-                await print_queue_locked(ctx, karaqueue)
+                await print_queue_locked(ctx, karaqueue, delete_old=False)
             await utils.delete(ctx)
 
         @discord.ui.button(label='Cancel', style=discord.ButtonStyle.gray)
@@ -506,9 +513,11 @@ async def command_dev(ctx: discord.ApplicationContext, command: str):
         await utils.respond(ctx, content=f'Unrecognized command {command}', ephemeral=True)
 
 
-async def print_queue_locked(ctx: utils.DiscordContext, karaqueue: common.Queue):
+async def print_queue_locked(
+    ctx: utils.DiscordContext, karaqueue: common.Queue, delete_old_queue_msg: bool = True,
+):
     """Print the current queue."""
-    if karaqueue.msg_id is not None:
+    if delete_old_queue_msg and karaqueue.msg_id is not None:
         try:
             channel = typing.cast(discord.TextChannel,
                                   bot.get_channel(karaqueue.channel_id))
@@ -517,7 +526,7 @@ async def print_queue_locked(ctx: utils.DiscordContext, karaqueue: common.Queue)
         except Exception:  # pylint: disable=broad-exception-caught
             # Message already deleted, etc.
             pass
-        karaqueue.msg_id = None
+    karaqueue.msg_id = None
 
     if len(karaqueue) == 0:
         msg = await utils.respond(ctx, content='No songs in queue!', view=EmptyQueueView())
