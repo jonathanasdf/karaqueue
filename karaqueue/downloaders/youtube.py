@@ -38,7 +38,7 @@ class YoutubeDownloader(common.Downloader):
         while True:
             attempt += 1
             if attempt > 1:
-                time.sleep(2)
+                time.sleep(1)
             ytv = pytube.YouTube(f'http://youtube.com/watch?v={vid}')
             if ytv.age_restricted:
                 ytv.bypass_age_gate()

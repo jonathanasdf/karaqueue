@@ -418,7 +418,7 @@ async def _update_with_current(ctx: utils.DiscordContext, delete_old_queue_msg: 
     else:
         await resp.edit(
             content=(f'**Now playing**\n[`{entry.name}`](<{entry.original_url}>)'
-                     f'[]({entry.url()})'))
+                     f'[ ]({entry.url()})'))
 
 
 @bot.slash_command(name='delete')
@@ -451,18 +451,15 @@ async def _delete(ctx: discord.ApplicationContext, index: int):
         @discord.ui.button(label='Delete', style=discord.ButtonStyle.red)
         async def delete_callback(self, _, __):
             """Delete a song from the queue."""
-            try:
-                async with karaqueue.lock:
-                    for i in enumerate(karaqueue):
-                        if karaqueue[i] == entry:
-                            karaqueue[i].delete()
-                            del karaqueue[i]
-                            break
-                    await utils.respond(ctx, f'Successfully deleted `{entry.title}` from the queue.')
-                    await print_queue_locked(ctx, karaqueue, delete_old_queue_msg=False)
-                await utils.delete(ctx)
-            except Exception as err:
-                print(err)
+            async with karaqueue.lock:
+                for i, _ in enumerate(karaqueue):
+                    if karaqueue[i] == entry:
+                        karaqueue[i].delete()
+                        del karaqueue[i]
+                        break
+                await utils.respond(ctx, f'Successfully deleted `{entry.title}` from the queue.')
+                await print_queue_locked(ctx, karaqueue, delete_old_queue_msg=False)
+            await utils.delete(ctx)
 
         @discord.ui.button(label='Cancel', style=discord.ButtonStyle.gray)
         async def cancel_callback(self, _, __):
