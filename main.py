@@ -380,20 +380,24 @@ async def _update_with_current(ctx: utils.DiscordContext):
 
         if PLAYER:
             async def monitor_player():
-                await asyncio.sleep(10)
                 player = players.player_lookup[PLAYER]
+                sleep_time = 1
                 while True:
                     if global_cancel.is_set():
                         raise asyncio.CancelledError()
-                    status = await player.get_status()
-                    sleep_time = 10
-                    if status is not None:
-                        if status.position == status.duration:
-                            bot.loop.create_task(_next(ctx))
-                            return
-                        if status.duration - status.position < 10000:
-                            sleep_time = (status.duration - status.position) / 1000.0 + 0.2
                     await asyncio.sleep(sleep_time)
+                    sleep_time = 10
+                    try:
+                        status = await player.get_status()
+                    except Exception:  # pylint: disable=broad-exception-caught
+                        continue
+                    if status is not None:
+                        if status.filename == os.path.basename(entry.video_path()):
+                            if status.position == status.duration:
+                                bot.loop.create_task(_next(ctx))
+                                return
+                            if status.duration - status.position < 10000:
+                                sleep_time = (status.duration - status.position) / 1000.0 + 0.2
             entry.player_monitor_task = bot.loop.create_task(monitor_player())
     else:
         await resp.edit(

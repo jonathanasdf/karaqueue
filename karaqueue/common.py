@@ -335,6 +335,7 @@ class Downloader:
 @dataclasses.dataclass
 class PlayerStatus:
     """The current status of a media player."""
+    filename: str  # Current media filename
     position: int  # Current position in ms
     duration: int  # Total duration in ms
 

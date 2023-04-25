@@ -21,6 +21,9 @@ class MpcHcPlayer(common.Player):
         except (requests.exceptions.ConnectTimeout, TimeoutError):
             return None
         soup = BeautifulSoup(page.text, 'html.parser')
+        filename = soup.find('p', attrs={'id': 'file'})
+        if filename is None:
+            raise ValueError('Could not find filename in stats page.')
         position = soup.find('p', attrs={'id': 'position'})
         if position is None:
             raise ValueError('Could not find position in stats page.')
@@ -28,6 +31,7 @@ class MpcHcPlayer(common.Player):
         if duration is None:
             raise ValueError('Could not find duration in stats page.')
         return common.PlayerStatus(
+            filename=filename.text,
             position=int(position.text),
             duration=int(duration.text),
         )

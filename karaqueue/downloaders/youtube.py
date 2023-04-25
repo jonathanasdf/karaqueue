@@ -3,6 +3,7 @@ import asyncio
 import functools
 import os
 import re
+import time
 from typing import List
 import discord
 import pytube
@@ -33,19 +34,29 @@ class YoutubeDownloader(common.Downloader):
             raise ValueError('Unrecognized url!')
 
         await utils.edit(interaction, content=f'Loading youtube id `{vid}`...')
-        ytv = pytube.YouTube(f'http://youtube.com/watch?v={vid}')
-        if ytv.age_restricted:
-            ytv.bypass_age_gate()
-        ytv.check_availability()
-        try:
-            ytv.length
-        except TypeError as exc:
-            raise ValueError('Error getting video info, please try again.') from exc
-        if ytv.length == 0:
-            raise ValueError('Error getting video info, please try again.')
-        if ytv.length > common.VIDEO_LIMIT_MINS * 60:
-            raise ValueError(
-                f'Please only queue videos shorter than {common.VIDEO_LIMIT_MINS} minutes.')
+        attempt = 0
+        while True:
+            attempt += 1
+            if attempt > 1:
+                time.sleep(1)
+            ytv = pytube.YouTube(f'http://youtube.com/watch?v={vid}')
+            if ytv.age_restricted:
+                ytv.bypass_age_gate()
+            ytv.check_availability()
+            try:
+                ytv.length
+            except TypeError as exc:
+                if attempt < 3:
+                    continue
+                raise ValueError('Error getting video info, please try again.') from exc
+            if ytv.length == 0:
+                if attempt < 3:
+                    continue
+                raise ValueError('Error getting video info, please try again.')
+            if ytv.length > common.VIDEO_LIMIT_MINS * 60:
+                raise ValueError(
+                    f'Please only queue videos shorter than {common.VIDEO_LIMIT_MINS} minutes.')
+            break
         await utils.edit(interaction, content=f'Loading youtube video `{ytv.title}`...')
 
         def load_streams(entry: common.Entry, cancel: List[asyncio.Event]) -> common.LoadResult:
