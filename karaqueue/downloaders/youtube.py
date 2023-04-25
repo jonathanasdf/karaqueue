@@ -38,7 +38,7 @@ class YoutubeDownloader(common.Downloader):
         while True:
             attempt += 1
             if attempt > 1:
-                time.sleep(1)
+                time.sleep(2)
             ytv = pytube.YouTube(f'http://youtube.com/watch?v={vid}')
             if ytv.age_restricted:
                 ytv.bypass_age_gate()
@@ -46,11 +46,11 @@ class YoutubeDownloader(common.Downloader):
             try:
                 ytv.length
             except TypeError as exc:
-                if attempt < 3:
+                if attempt < 5:
                     continue
                 raise ValueError('Error getting video info, please try again.') from exc
             if ytv.length == 0:
-                if attempt < 3:
+                if attempt < 5:
                     continue
                 raise ValueError('Error getting video info, please try again.')
             if ytv.length > common.VIDEO_LIMIT_MINS * 60:

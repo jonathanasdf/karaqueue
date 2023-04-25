@@ -7,17 +7,23 @@ import http.server
 import os
 import ssl
 import re
+import sys
 from typing import Optional, Tuple
 import urllib.parse
 
 
+cwd = os.path.dirname(__file__)
+sys.stdout = open(os.path.join(cwd, 'httpsserver.log'), 'w', encoding='utf-8')
+sys.stderr = open(os.path.join(cwd, 'httpsserver-err.log'), 'w', encoding='utf-8')
+
+
 cfg = configparser.ConfigParser()
-cfg.read(os.path.join(os.path.dirname(__file__), 'config.ini'))
+cfg.read(os.path.join(cwd, 'config.ini'))
 
 
 HOSTNAME = cfg['DEFAULT']['internal_host']
 PORT = 443
-CERT_DIR = os.path.join(os.path.dirname(__file__), 'certs')
+CERT_DIR = os.path.join(cwd, 'certs')
 
 
 def copy_byte_range(infile, outfile, start=None, stop=None, bufsize=16*1024):

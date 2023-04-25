@@ -403,16 +403,14 @@ async def _update_with_current(ctx: utils.DiscordContext, delete_old_queue_msg: 
                         continue
                     if status is not None:
                         if status.filename == os.path.basename(entry.video_path()):
-                            if status.position > 0:
-                                playback_started = True
-                            if (status.position == status.duration or
-                                    (playback_started and status.position == 0)):
-                                logging.info('Next called from local video playback end.')
+                            if (playback_started and
+                                    (status.position == status.duration or status.position == 0)):
                                 bot.loop.create_task(_next(ctx, is_user_action=False))
                                 return
+                            if status.position > 0 and status.position < status.duration:
+                                playback_started = True
                             if status.duration - status.position < 10000:
-                                sleep_time = (status.duration -
-                                              status.position) / 1000.0 + 0.2
+                                sleep_time = (status.duration - status.position) / 1000.0 + 0.2
                         elif playback_started:
                             # Somehow we're on the next song already, stop waiting.
                             return
@@ -453,15 +451,18 @@ async def _delete(ctx: discord.ApplicationContext, index: int):
         @discord.ui.button(label='Delete', style=discord.ButtonStyle.red)
         async def delete_callback(self, _, __):
             """Delete a song from the queue."""
-            async with karaqueue.lock:
-                for i in enumerate(karaqueue):
-                    if karaqueue[i] == entry:
-                        karaqueue[i].delete()
-                        del karaqueue[i]
-                        break
-                await utils.respond(ctx, f'Successfully deleted `{entry.title}` from the queue.')
-                await print_queue_locked(ctx, karaqueue, delete_old_queue_msg=False)
-            await utils.delete(ctx)
+            try:
+                async with karaqueue.lock:
+                    for i in enumerate(karaqueue):
+                        if karaqueue[i] == entry:
+                            karaqueue[i].delete()
+                            del karaqueue[i]
+                            break
+                    await utils.respond(ctx, f'Successfully deleted `{entry.title}` from the queue.')
+                    await print_queue_locked(ctx, karaqueue, delete_old_queue_msg=False)
+                await utils.delete(ctx)
+            except Exception as err:
+                print(err)
 
         @discord.ui.button(label='Cancel', style=discord.ButtonStyle.gray)
         async def cancel_callback(self, _, __):
