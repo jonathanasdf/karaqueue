@@ -167,21 +167,19 @@ async def _load(
     user = interaction.user
     if user is None:
         return
-    await utils.respond(interaction, 'Loading...', ephemeral=True)
     video_url = video_url.strip()
     audio_url = audio_url.strip()
     karaqueue = await common.get_queue(interaction)
-    async with karaqueue.lock:
-        if len(karaqueue) >= common.MAX_QUEUED:
-            await utils.respond(
-                interaction, 'Queue is full! Delete some items with `/delete`', ephemeral=True)
-            return
-        if sum(entry.user_id == user.id for entry in karaqueue) >= common.MAX_QUEUED_PER_USER:
-            await utils.respond(
-                interaction,
-                f'Each user may only have {common.MAX_QUEUED_PER_USER} songs in the queue!',
-                ephemeral=True)
-            return
+    if len(karaqueue) >= common.MAX_QUEUED:
+        await utils.respond(
+            interaction, 'Queue is full! Delete some items with `/delete`', ephemeral=True)
+        return
+    if sum(entry.user_id == user.id for entry in karaqueue) >= common.MAX_QUEUED_PER_USER:
+        await utils.respond(
+            interaction,
+            f'Each user may only have {common.MAX_QUEUED_PER_USER} songs in the queue!',
+            ephemeral=True)
+        return
 
     await utils.respond(interaction, f'Loading `{video_url}`...', ephemeral=True)
     path = tempfile.mkdtemp(dir=pathlib.PurePath(common.SERVING_DIR))
@@ -348,7 +346,7 @@ async def _next_locked(ctx: utils.DiscordContext, karaqueue: common.Queue, is_us
     karaqueue.current = karaqueue.pop(0)
     async with new_process_task:
         new_process_task.notify()
-    bot.loop.create_task(_update_with_current(ctx))
+    bot.loop.create_task(_update_with_current(ctx, delete_old_queue_msg=False))
 
 
 async def _update_with_current(ctx: utils.DiscordContext, delete_old_queue_msg: bool = True):
@@ -459,7 +457,7 @@ async def _delete(ctx: discord.ApplicationContext, index: int):
                         del karaqueue[i]
                         break
                 await utils.respond(ctx, f'Successfully deleted `{entry.title}` from the queue.')
-                await print_queue_locked(ctx, karaqueue, delete_old=False)
+                await print_queue_locked(ctx, karaqueue, delete_old_queue_msg=False)
             await utils.delete(ctx)
 
         @discord.ui.button(label='Cancel', style=discord.ButtonStyle.gray)
