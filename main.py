@@ -174,10 +174,10 @@ async def _load(
         await utils.respond(
             interaction, 'Queue is full! Delete some items with `/delete`', ephemeral=True)
         return
-    if sum(entry.user_id == user.id for entry in karaqueue) >= common.MAX_QUEUED_PER_USER:
+    if sum(entry.user_id == user.id for entry in karaqueue) >= karaqueue.per_user_limit:
         await utils.respond(
             interaction,
-            f'Each user may only have {common.MAX_QUEUED_PER_USER} songs in the queue!',
+            f'Each user may only have {karaqueue.per_user_limit} songs in the queue!',
             ephemeral=True)
         return
 
@@ -517,6 +517,13 @@ async def command_dev(ctx: discord.ApplicationContext, command: str):
         await utils.respond(ctx, content=msg, ephemeral=True)
     elif command == 'local':
         karaqueue.local = not karaqueue.local
+        await utils.respond(ctx, content='Success', ephemeral=True)
+    elif command.startswith('limit '):
+        try:
+            value = float(command[len('limit '):])
+        except ValueError:
+            await utils.respond(ctx, content=f'Unrecognized command {command}', ephemeral=True)
+        karaqueue.per_user_limit = value
         await utils.respond(ctx, content='Success', ephemeral=True)
     else:
         await utils.respond(ctx, content=f'Unrecognized command {command}', ephemeral=True)

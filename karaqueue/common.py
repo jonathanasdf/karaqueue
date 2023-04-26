@@ -244,6 +244,7 @@ class Queue:
     queue: List[Entry] = dataclasses.field(default_factory=list)
     lock = asyncio.Lock()
 
+    per_user_limit: int = MAX_QUEUED_PER_USER
     global_offset_ms: int = 0
     local: bool = False
     next_advance_time: Optional[datetime.datetime] = None
