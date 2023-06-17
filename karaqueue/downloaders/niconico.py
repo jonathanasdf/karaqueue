@@ -37,11 +37,12 @@ class NicoNicoDownloader(common.Downloader):
     """NicoNico Downloader."""
 
     def match(self, url: str) -> bool:
-        return 'nicovideo.jp/watch/sm' in url
+        return 'nicovideo.jp/watch/sm' in url or 'nico.ms/sm' in url
 
     async def load(
         self, interaction: discord.Interaction, url: str, *, video: bool, audio: bool,
     ) -> common.DownloadResult:
+        url = url.replace('sp.nicovideo.jp', 'nicovideo.jp')
         sess, session_cookie = nicoutils.login(USERNAME, PASSWORD, SESSION_COOKIE)
         update_session_cookie(session_cookie)
         params = nicoutils.get_video_params(sess, url)

@@ -418,7 +418,7 @@ async def _update_with_current(ctx: utils.DiscordContext, delete_old_queue_msg: 
     else:
         await resp.edit(
             content=(f'**Now playing**\n[`{entry.name}`](<{entry.original_url}>)'
-                     f'[ ]({entry.url()})'))
+                     f'[.]({entry.url()})'))
 
 
 @bot.slash_command(name='delete')
@@ -478,8 +478,6 @@ async def command_move(ctx: discord.ApplicationContext, index_from: int, index_t
                 or index_to < 1 or index_to > len(karaqueue)):
             await utils.respond(ctx, 'Invalid index!', ephemeral=True)
             return
-        if index_from <= index_to:
-            index_to -= 1
         entry = karaqueue[index_from-1]
         del karaqueue[index_from-1]
         karaqueue.insert(index_to-1, entry)
@@ -517,6 +515,14 @@ async def command_dev(ctx: discord.ApplicationContext, command: str):
         await utils.respond(ctx, content=msg, ephemeral=True)
     elif command == 'local':
         karaqueue.local = not karaqueue.local
+        await utils.respond(ctx, content='Success', ephemeral=True)
+    elif command == 'reload':
+        async with karaqueue.lock:
+            if karaqueue.current:
+                karaqueue.current.onchange_locked()
+                async with new_process_task:
+                    new_process_task.notify()
+        await _update_with_current(ctx)
         await utils.respond(ctx, content='Success', ephemeral=True)
     elif command.startswith('limit '):
         try:

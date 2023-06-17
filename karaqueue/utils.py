@@ -33,7 +33,9 @@ def call(binary: str, cmd: str, return_stdout: bool = False, background: bool = 
 
 DiscordContext = Union[discord.ApplicationContext, discord.Interaction]
 DiscordMessage = Union[discord.Interaction,
-                       discord.InteractionMessage, discord.WebhookMessage]
+                       discord.InteractionMessage,
+                       discord.WebhookMessage,
+                       discord.Message]
 
 
 async def respond(ctx: DiscordContext, *args, **kwargs) -> DiscordMessage:
@@ -43,12 +45,19 @@ async def respond(ctx: DiscordContext, *args, **kwargs) -> DiscordMessage:
         interaction = ctx.interaction
     else:
         interaction = ctx
+
+    async def send_followup():
+        try:
+            return await interaction.followup.send(*args, **kwargs)
+        except discord.errors.HTTPException:
+            return await interaction.channel.send(*args, **kwargs)
+
     try:
         if not interaction.response.is_done():
             return await interaction.response.send_message(*args, **kwargs)
-        return await interaction.followup.send(*args, **kwargs)
+        return await send_followup()
     except discord.errors.InteractionResponded:
-        return await interaction.followup.send(*args, **kwargs)
+        return await send_followup()
 
 
 async def edit(ctx: DiscordContext, *args, **kwargs) -> DiscordMessage:
