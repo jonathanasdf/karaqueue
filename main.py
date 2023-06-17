@@ -114,6 +114,7 @@ async def _help(ctx: discord.ApplicationContext):
         '`/q`: queue a video from youtube. Also `/add` or `/load`.',
         '`/list`: show the current playlist.',
         '`/next`: play the next entry on the playlist.',
+        '`/reload`: reload the current song if for some reason it got bugged.',
         '`/delete index`: delete an entry from the playlist. Also `/remove`.',
         '`/move from to`: change the position of an entry in the playlist.',
         ('`/pitch pitch [index]`: change the pitch of a video on the playlist. '
@@ -484,6 +485,21 @@ async def command_move(ctx: discord.ApplicationContext, index_from: int, index_t
         await print_queue_locked(ctx, karaqueue)
 
 
+@bot.slash_command(name='reload')
+async def command_reload(ctx: discord.ApplicationContext):
+    """Reload the current song."""
+    karaqueue = await common.get_queue(ctx)
+    async with karaqueue.lock:
+        if not karaqueue.current:
+            await utils.respond(ctx, 'No current song to reload!', ephemeral=True)
+            return
+        karaqueue.current.onchange_locked()
+        async with new_process_task:
+            new_process_task.notify()
+    await utils.respond(ctx, content='Success', ephemeral=True)
+    await _update_with_current(ctx)
+
+
 async def is_dev(ctx: commands.Context) -> bool:
     """Is the user the dev user."""
     if not DEV_USER_ID:
@@ -515,14 +531,6 @@ async def command_dev(ctx: discord.ApplicationContext, command: str):
         await utils.respond(ctx, content=msg, ephemeral=True)
     elif command == 'local':
         karaqueue.local = not karaqueue.local
-        await utils.respond(ctx, content='Success', ephemeral=True)
-    elif command == 'reload':
-        async with karaqueue.lock:
-            if karaqueue.current:
-                karaqueue.current.onchange_locked()
-                async with new_process_task:
-                    new_process_task.notify()
-        await _update_with_current(ctx)
         await utils.respond(ctx, content='Success', ephemeral=True)
     elif command.startswith('limit '):
         try:
