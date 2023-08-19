@@ -296,6 +296,9 @@ async def get_queue_key(ctx: utils.DiscordContext) -> Tuple[int, int]:
     if guild_id is None or channel_id is None:
         await utils.respond(ctx, content='Error: guild_id or channel_id is None', ephemeral=True)
         raise ValueError(f'guild_id or channel_id is None: {guild_id} {channel_id}')
+    # if guild_id != 1077809040740057181:
+    #     await utils.respond(ctx, content=f'Error: wrong queue {guild_id}', ephemeral=True)
+    #     raise ValueError(f'guild_id or channel_id is None: {guild_id} {channel_id}')
     return guild_id, channel_id
 
 

@@ -37,7 +37,7 @@ class NicoNicoDownloader(common.Downloader):
     """NicoNico Downloader."""
 
     def match(self, url: str) -> bool:
-        return 'nicovideo.jp/watch/sm' in url or 'nico.ms/sm' in url
+        return 'nicovideo.jp/watch/' in url or 'nico.ms/' in url
 
     async def load(
         self, interaction: discord.Interaction, url: str, *, video: bool, audio: bool,
