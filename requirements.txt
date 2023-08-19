@@ -2,7 +2,7 @@ absl-py
 beautifulsoup4
 bilix
 py-cord[speed]
-pytube
+git+https://github.com/oncename/pytube.git
 requests
 soundcloud-lib
 StringProgressBar

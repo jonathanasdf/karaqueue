@@ -108,6 +108,13 @@ async def on_ready():
     bot.add_view(EmptyQueueView())
 
 
+def _is_dev_id(author_id) -> bool:
+    """Is this id the dev user."""
+    if not DEV_USER_ID:
+        return False
+    return str(author_id) == DEV_USER_ID
+
+
 async def _help(ctx: discord.ApplicationContext):
     resp = [
         'Commands:',
@@ -175,7 +182,8 @@ async def _load(
         await utils.respond(
             interaction, 'Queue is full! Delete some items with `/delete`', ephemeral=True)
         return
-    if sum(entry.user_id == user.id for entry in karaqueue) >= karaqueue.per_user_limit:
+    if (not _is_dev_id(user.id) and
+            sum(entry.user_id == user.id for entry in karaqueue) >= karaqueue.per_user_limit):
         await utils.respond(
             interaction,
             f'Each user may only have {karaqueue.per_user_limit} songs in the queue!',
@@ -502,9 +510,7 @@ async def command_reload(ctx: discord.ApplicationContext):
 
 async def is_dev(ctx: commands.Context) -> bool:
     """Is the user the dev user."""
-    if not DEV_USER_ID:
-        return False
-    return str(ctx.author.id) == DEV_USER_ID
+    return _is_dev_id(ctx.author.id)
 
 
 @bot.slash_command(name='dev')
