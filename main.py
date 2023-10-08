@@ -523,7 +523,9 @@ async def command_dev(ctx: discord.ApplicationContext, command: str):
         msg = f'Current queue: {key}'
         msg = msg + '\nAll queues:'
         for queue_key, queue in common.karaqueue.items():
-            msg = msg + f'\n{queue_key}'
+            msg = msg + f'\n{queue_key} [{id(queue)}]'
+            if queue.current:
+                msg = msg + f'\nCurrent: [`{queue.current.name}`](<{queue.current.original_url}>)'
             contents = queue.format()
             if contents:
                 msg = msg + f'\n{contents}'
@@ -564,9 +566,15 @@ async def print_queue_locked(
             pass
     karaqueue.msg_id = None
 
+    msg = ''
+    if karaqueue.current:
+        msg = f'**Now playing**\n`{karaqueue.current.name}`'
     if len(karaqueue) == 0:
-        msg = await utils.respond(ctx, content='No songs in queue!', view=EmptyQueueView())
+        msg = f'{msg}\nNo songs in queue!'.strip()
+        msg = await utils.respond(ctx, content=msg, view=EmptyQueueView())
     else:
+        msg = f'{msg}\n**Up Next**\n{karaqueue.format()}'.strip()
+
         class QueueView(EmptyQueueView):
             """Discord view for when queue is not empty. Has a Next Song button."""
 
@@ -576,7 +584,7 @@ async def print_queue_locked(
                 logging.info('Next called from button click.')
                 await _next(ctx, is_user_action=True)
 
-        msg = await utils.respond(ctx, f'**Up Next**\n{karaqueue.format()}', view=QueueView())
+        msg = await utils.respond(ctx, msg, view=QueueView())
 
     if isinstance(msg, discord.Interaction):
         msg = await msg.original_response()

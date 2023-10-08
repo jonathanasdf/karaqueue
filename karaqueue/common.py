@@ -287,6 +287,7 @@ class Queue:
 
 
 karaqueue: Dict[Tuple[int, int], Queue] = {}
+karaqueue_lock = asyncio.Lock()
 
 
 async def get_queue_key(ctx: utils.DiscordContext) -> Tuple[int, int]:
@@ -296,9 +297,6 @@ async def get_queue_key(ctx: utils.DiscordContext) -> Tuple[int, int]:
     if guild_id is None or channel_id is None:
         await utils.respond(ctx, content='Error: guild_id or channel_id is None', ephemeral=True)
         raise ValueError(f'guild_id or channel_id is None: {guild_id} {channel_id}')
-    # if guild_id != 1077809040740057181:
-    #     await utils.respond(ctx, content=f'Error: wrong queue {guild_id}', ephemeral=True)
-    #     raise ValueError(f'guild_id or channel_id is None: {guild_id} {channel_id}')
     return guild_id, channel_id
 
 
@@ -309,8 +307,9 @@ async def get_queue(ctx: utils.DiscordContext) -> Queue:
         msg = f'This server is not allowed to use this bot. Please contact {DEV_CONTACT}.'
         await utils.respond(ctx, content=f'Error: {msg}', ephemeral=True)
         raise ValueError(f'{msg}: {key[0]}')
-    if key not in karaqueue:
-        karaqueue[key] = Queue(guild_id=key[0], channel_id=key[1])
+    async with karaqueue_lock:
+        if key not in karaqueue:
+            karaqueue[key] = Queue(guild_id=key[0], channel_id=key[1])
     return karaqueue[key]
 
 
