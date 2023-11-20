@@ -1,16 +1,19 @@
 """Common classes."""
 import asyncio
 import configparser
+import contextlib
 import dataclasses
 import datetime
 import logging
 import os
 import pathlib
 import random
+import shutil
 import string
 import tempfile
 from typing import Awaitable, Callable, Dict, List, Optional, Tuple
 import discord
+from NamedAtomicLock import NamedAtomicLock
 
 from karaqueue import utils
 
@@ -24,10 +27,11 @@ _DEFAULT = 'DEFAULT'
 
 HOST = CONFIG[_DEFAULT].get('host')
 SERVING_DIR = CONFIG[_DEFAULT]['serving_dir']
-ALLOWED_GUILDIDS = list(map(int, CONFIG[_DEFAULT]['allowed_guildids'].strip().split(',')))
+ALLOWED_GUILDIDS = list(
+    map(int, CONFIG[_DEFAULT]['allowed_guildids'].strip().split(',')))
 DEV_CONTACT = CONFIG[_DEFAULT]['dev_contact']
 
-VIDEO_LIMIT_MINS = 10
+VIDEO_LIMIT_MINS = 11
 MAX_QUEUED = 20
 MAX_QUEUED_PER_USER = 2
 
@@ -169,7 +173,8 @@ class Entry:
                 '-loglevel quiet -select_streams v:0 -show_entries stream=width,height -of csv=p=0 '
                 f'"{os.path.join(self.path, self._load_result.video_path)}"',
                 return_stdout=True)
-            self._load_result.width, self._load_result.height = map(int, dimensions.split(','))
+            self._load_result.width, self._load_result.height = map(
+                int, dimensions.split(','))
 
         await asyncio.to_thread(self._process_load_result, cancel)
 
@@ -183,7 +188,8 @@ class Entry:
             self.load_msg = f'Loading video `{self.title}`...\nShifting pitch...'
             shift_path = os.path.join(self.path, 'shifted.mp3')
             pitch_cents = int(self.pitch_shift * 100)
-            utils.call('sox', f'"{audio_path}" "{shift_path}" pitch {pitch_cents}')
+            utils.call(
+                'sox', f'"{audio_path}" "{shift_path}" pitch {pitch_cents}')
             audio_path = shift_path
 
         for event in cancel:
@@ -206,7 +212,8 @@ class Entry:
 
         self.load_msg = f'Loading video `{self.title}`...\nCreating video...'
         self._processed_path = tempfile.mktemp(dir=self.path, suffix='.mp4')
-        utils.call('ffmpeg', f'{input_flags} -movflags faststart {self._processed_path}')
+        utils.call(
+            'ffmpeg', f'{input_flags} -movflags faststart {self._processed_path}')
 
         for event in cancel:
             if event.is_set():
@@ -287,7 +294,24 @@ class Queue:
 
 
 karaqueue: Dict[Tuple[int, int], Queue] = {}
-karaqueue_lock = asyncio.Lock()
+
+lock_dir = os.path.join(tempfile.gettempdir(), 'server_lock')
+if os.path.exists(lock_dir):
+    shutil.rmtree(lock_dir)
+os.makedirs(lock_dir)
+
+
+@contextlib.contextmanager
+def named_lock(name):
+    """Named atomic lock."""
+    lock = NamedAtomicLock(name, lockDir=lock_dir)
+    try:
+        lock.acquire(timeout=30)
+        if not lock.hasLock:
+            raise ValueError(f'Could not acquire lock {name}')
+        yield lock
+    finally:
+        lock.release()
 
 
 async def get_queue_key(ctx: utils.DiscordContext) -> Tuple[int, int]:
@@ -296,7 +320,8 @@ async def get_queue_key(ctx: utils.DiscordContext) -> Tuple[int, int]:
     channel_id = ctx.channel_id
     if guild_id is None or channel_id is None:
         await utils.respond(ctx, content='Error: guild_id or channel_id is None', ephemeral=True)
-        raise ValueError(f'guild_id or channel_id is None: {guild_id} {channel_id}')
+        raise ValueError(
+            f'guild_id or channel_id is None: {guild_id} {channel_id}')
     return guild_id, channel_id
 
 
@@ -307,7 +332,7 @@ async def get_queue(ctx: utils.DiscordContext) -> Queue:
         msg = f'This server is not allowed to use this bot. Please contact {DEV_CONTACT}.'
         await utils.respond(ctx, content=f'Error: {msg}', ephemeral=True)
         raise ValueError(f'{msg}: {key[0]}')
-    async with karaqueue_lock:
+    with named_lock('get_queue'):
         if key not in karaqueue:
             karaqueue[key] = Queue(guild_id=key[0], channel_id=key[1])
     return karaqueue[key]
