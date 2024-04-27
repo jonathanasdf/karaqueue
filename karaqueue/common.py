@@ -196,6 +196,26 @@ class Entry:
             if event.is_set():
                 raise asyncio.CancelledError()
 
+        title_path = os.path.join(self.path, 'title.jpg')
+        utils.call(
+            'convert',
+            f'-background black -size {self._load_result.width}x{self._load_result.height} '
+            '-fill "#ff0080" -pointsize 24 -font "Yu-Gothic-Medium-&-Yu-Gothic-UI-Regular" '
+            f'-gravity west caption:"{self.title}" "{title_path}"'
+        )
+        title_video_path = os.path.join(self.path, 'title.mp4')
+        utils.call(
+            'ffmpeg',
+            f'-framerate 30 -loop 1 -t 3 -i {title_path} '
+            '-f lavfi -i anullsrc=cl=stereo:r=44100 -t 3 '
+            '-vf "fade=in:0:30, fade=out:60:30" '
+            f'"{title_video_path}"',
+        )
+
+        for event in cancel:
+            if event.is_set():
+                raise asyncio.CancelledError()
+
         video_path = os.path.join(self.path, self._load_result.video_path)
 
         offset_ms = self.offset_ms + self.queue.global_offset_ms
@@ -211,9 +231,21 @@ class Entry:
                            f'-c:a copy -c:v copy -map 1:v:0 -map 0:a:0')
 
         self.load_msg = f'Loading video `{self.title}`...\nCreating video...'
+        main_video_path = tempfile.mktemp(dir=self.path, suffix='.mp4')
+        utils.call(
+            'ffmpeg', f'{input_flags} -movflags faststart {main_video_path}')
+
+        for event in cancel:
+            if event.is_set():
+                raise asyncio.CancelledError()
+
         self._processed_path = tempfile.mktemp(dir=self.path, suffix='.mp4')
         utils.call(
-            'ffmpeg', f'{input_flags} -movflags faststart {self._processed_path}')
+            'ffmpeg',
+            f'-i "{title_video_path}" -i "{main_video_path}" '
+            '-filter_complex "[0:v] [0:a] [1:v] [1:a] concat=n=2:v=1:a=1 [v] [a]" '
+            f'-map "[v]" -map "[a]" "{self._processed_path}"'
+        )
 
         for event in cancel:
             if event.is_set():
