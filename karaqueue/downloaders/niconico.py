@@ -20,7 +20,8 @@ _PASSWORD = 'password'
 _SESSION = 'session'
 
 USERNAME = common.CONFIG.get(_SECTION, _USERNAME, fallback=None)
-PASSWORD = base64.b64decode(common.CONFIG.get(_SECTION, _PASSWORD, fallback='')).decode('utf-8')
+PASSWORD = base64.b64decode(common.CONFIG.get(
+    _SECTION, _PASSWORD, fallback='')).decode('utf-8')
 SESSION_COOKIE = common.CONFIG.get(_SECTION, _SESSION, fallback='')
 
 
@@ -43,7 +44,8 @@ class NicoNicoDownloader(common.Downloader):
         self, interaction: discord.Interaction, url: str, *, video: bool, audio: bool,
     ) -> common.DownloadResult:
         url = url.replace('sp.nicovideo.jp', 'nicovideo.jp')
-        sess, session_cookie = nicoutils.login(USERNAME, PASSWORD, SESSION_COOKIE)
+        sess, session_cookie = nicoutils.login(
+            USERNAME, PASSWORD, SESSION_COOKIE)
         update_session_cookie(session_cookie)
         params = nicoutils.get_video_params(sess, url)
         title = params['video']['title']
@@ -56,19 +58,25 @@ class NicoNicoDownloader(common.Downloader):
         await utils.edit(interaction, content=f'Loading niconico video `{title}`...')
 
         def load_streams(entry: common.Entry, cancel: List[asyncio.Event]) -> common.LoadResult:
-            sess, session_cookie = nicoutils.login(USERNAME, PASSWORD, SESSION_COOKIE)
+            sess, session_cookie = nicoutils.login(
+                USERNAME, PASSWORD, SESSION_COOKIE)
             update_session_cookie(session_cookie)
 
-            def progress_func(current: int, total_size: int):
+            def progress_func(current: int, total_size: int, parts: bool = False):
                 for event in cancel:
                     if event.is_set():
                         raise asyncio.CancelledError()
-                total_size_mb = total_size / 1024 / 1024
                 progress = StringProgressBar.progressBar.filledBar(
                     total_size, current)  # type: ignore
-                entry.load_msg = (
-                    f'Loading niconico video `{title}`...\n'
-                    f'Downloading: {progress[0]} {progress[1]:0.0f}% of {total_size_mb:0.1f}Mb')
+                if parts:
+                    entry.load_msg = (
+                        f'Loading niconico video `{title}`...\n'
+                        f'Downloading: {progress[0]} part {current} of {total_size}')
+                else:
+                    total_size_mb = total_size / 1024 / 1024
+                    entry.load_msg = (
+                        f'Loading niconico video `{title}`...\n'
+                        f'Downloading: {progress[0]} {progress[1]:0.0f}% of {total_size_mb:0.1f}Mb')
 
             result = common.LoadResult()
             if video:
@@ -81,7 +89,8 @@ class NicoNicoDownloader(common.Downloader):
                     video_path = os.path.join(entry.path, result.video_path)
                 else:
                     video_path = tempfile.mktemp(dir=entry.path, suffix='.mp4')
-                    nicoutils.download_video(sess, url, video_path, progress_func)
+                    nicoutils.download_video(
+                        sess, url, video_path, progress_func)
                 result.audio_path = 'audio.mp3'
                 utils.call('ffmpeg', f'-i "{video_path}" '
                            f'-ac 2 -f mp3 "{os.path.join(entry.path, result.audio_path)}"')

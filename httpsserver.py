@@ -4,17 +4,36 @@ import datetime
 import email
 import http
 import http.server
+import logging
 import os
-import ssl
 import re
+import ssl
 import sys
 from typing import Optional, Tuple
 import urllib.parse
 
 
+def setup_logging():
+    """Set up logging."""
+    # Clear handlers from imports.
+    logging.getLogger().handlers = []
+    fmt = '%(asctime)s %(levelname)-8s %(message)s'
+    datefmt = '%Y-%m-%d %H:%M:%S'
+    formatter = logging.Formatter(fmt, datefmt)
+    logging.basicConfig(level=logging.INFO, format=fmt, datefmt=datefmt)
+    file_handler = logging.FileHandler(
+        os.path.join(os.path.dirname(__file__), 'httpsserver.log'))
+    file_handler.formatter = formatter
+    logging.getLogger().addHandler(file_handler)
+
+
+setup_logging()
+
+
 cwd = os.path.dirname(__file__)
 sys.stdout = open(os.path.join(cwd, 'httpsserver.log'), 'w', encoding='utf-8')
-sys.stderr = open(os.path.join(cwd, 'httpsserver-err.log'), 'w', encoding='utf-8')
+sys.stderr = open(os.path.join(cwd, 'httpsserver-err.log'),
+                  'w', encoding='utf-8')
 
 
 cfg = configparser.ConfigParser()
@@ -77,6 +96,12 @@ class RangeRequestHandler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.range = None
+
+    def list_directory(self, path):
+        self.send_error(
+            http.HTTPStatus.NOT_FOUND,
+            "No permission to list directory")
+        return None
 
     def send_head(self):
         self.range = None
@@ -204,10 +229,8 @@ class RangeRequestHandler(http.server.SimpleHTTPRequestHandler):
 
 httpd = http.server.HTTPServer((HOSTNAME, PORT), RangeRequestHandler)
 context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-context.load_verify_locations(os.path.join(CERT_DIR, 'cert.ca-bundle'))
-context.load_cert_chain(
-    keyfile=os.path.join(CERT_DIR, 'cert.pem'),
-    certfile=os.path.join(CERT_DIR, 'cert.crt'))
+context.load_cert_chain(certfile=os.path.join(
+    CERT_DIR, 'cert.crt'), keyfile=os.path.join(CERT_DIR, 'cert.key'))
 httpd.socket = context.wrap_socket(httpd.socket, server_side=True)
-print(f'Serving on {httpd.server_address}')
+logging.info(f'Serving on {httpd.server_address}')
 httpd.serve_forever()
