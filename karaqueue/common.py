@@ -209,22 +209,23 @@ class Entry:
             f' -show_entries stream=sample_rate -i "{audio_path}"',
             return_stdout=True,
         ).strip()
-        title_path = os.path.join(self.path, 'title.jpg')
-        escaped_title = self.title.replace('"', '\\"')
-        utils.call(
-            'convert',
-            f'-background black -size {self._load_result.width}x{self._load_result.height} '
-            '-fill "#ff0080" -pointsize 48 -font "Yu-Gothic-Medium-&-Yu-Gothic-UI-Regular" '
-            f'-gravity center caption:"{escaped_title}" "{title_path}"'
-        )
         title_video_path = os.path.join(self.path, 'title.mp4')
-        utils.call(
-            'ffmpeg',
-            f'-framerate {framerate} -loop 1 -t 3 -i {title_path} '
-            f'-f lavfi -i anullsrc=cl=stereo:r={samplerate} -t 2 '
-            f'-vf "fade=in:0:d=0.5, fade=out:st=2.5:d=0.5" '
-            f'"{title_video_path}"',
-        )
+        if not os.path.exists(title_video_path):
+            title_path = os.path.join(self.path, 'title.jpg')
+            escaped_title = self.title.replace('"', '\\"')
+            utils.call(
+                'convert',
+                f'-background black -size {self._load_result.width}x{self._load_result.height} '
+                '-fill "#ff0080" -pointsize 48 -font "Yu-Gothic-Medium-&-Yu-Gothic-UI-Regular" '
+                f'-gravity center caption:"{escaped_title}" "{title_path}"'
+            )
+            utils.call(
+                'ffmpeg',
+                f'-framerate {framerate} -loop 1 -t 3 -i {title_path} '
+                f'-f lavfi -i anullsrc=cl=stereo:r={samplerate} -t 2 '
+                f'-vf "fade=in:0:d=0.5, fade=out:st=2.5:d=0.5" '
+                f'"{title_video_path}"',
+            )
 
         for event in cancel:
             if event.is_set():
