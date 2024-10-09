@@ -183,6 +183,7 @@ class Entry:
             raise ValueError('Queue reference not set!')
         if self._load_result is None:
             raise ValueError('load_result is None! This should not happen!')
+        video_path = os.path.join(self.path, self._load_result.video_path)
         audio_path = os.path.join(self.path, self._load_result.audio_path)
         if self.pitch_shift:
             self.load_msg = f'Loading video `{self.title}`...\nShifting pitch...'
@@ -196,7 +197,38 @@ class Entry:
             if event.is_set():
                 raise asyncio.CancelledError()
 
-        video_path = os.path.join(self.path, self._load_result.video_path)
+        framerate = utils.call(
+            'ffprobe',
+            '-v 0 -of csv=p=0 -select_streams v:0 -show_entries '
+            f'stream=r_frame_rate -i "{video_path}"',
+            return_stdout=True,
+        ).strip()
+        samplerate = utils.call(
+            'ffprobe',
+            '-v error -select_streams a -of default=noprint_wrappers=1:nokey=1 '
+            f' -show_entries stream=sample_rate -i "{audio_path}"',
+            return_stdout=True,
+        ).strip()
+        title_path = os.path.join(self.path, 'title.jpg')
+        escaped_title = self.title.replace('"', '\\"')
+        utils.call(
+            'convert',
+            f'-background black -size {self._load_result.width}x{self._load_result.height} '
+            '-fill "#ff0080" -pointsize 24 -font "Yu-Gothic-Medium-&-Yu-Gothic-UI-Regular" '
+            f'-gravity center caption:"{escaped_title}" "{title_path}"'
+        )
+        title_video_path = os.path.join(self.path, 'title.mp4')
+        utils.call(
+            'ffmpeg',
+            f'-framerate {framerate} -loop 1 -t 2 -i {title_path} '
+            f'-f lavfi -i anullsrc=cl=stereo:r={samplerate} -t 2 '
+            f'-vf "fade=in:0:d=0.5, fade=out:st=1.5:d=0.5" '
+            f'"{title_video_path}"',
+        )
+
+        for event in cancel:
+            if event.is_set():
+                raise asyncio.CancelledError()
 
         offset_ms = self.offset_ms + self.queue.global_offset_ms
         if offset_ms == 0:
@@ -211,9 +243,22 @@ class Entry:
                            f'-c:a copy -c:v copy -map 1:v:0 -map 0:a:0')
 
         self.load_msg = f'Loading video `{self.title}`...\nCreating video...'
+        main_video_path = tempfile.mktemp(dir=self.path, suffix='.mp4')
+        utils.call(
+            'ffmpeg', f'-hwaccel cuda {input_flags} -movflags faststart "{main_video_path}"')
+
+        for event in cancel:
+            if event.is_set():
+                raise asyncio.CancelledError()
+
         self._processed_path = tempfile.mktemp(dir=self.path, suffix='.mp4')
         utils.call(
-            'ffmpeg', f'{input_flags} -movflags faststart {self._processed_path}')
+            'ffmpeg',
+            f'-hwaccel cuda -i "{title_video_path}" -i "{main_video_path}" -filter_complex '
+            '"[0:v]format=yuv420p[v0];[1:v]format=yuv420p[v1];'
+            '[v0][0:a][v1][1:a]concat=n=2:v=1:a=1[v][a]" '
+            '-map "[v]" -map "[a]" -c:v libx264 -c:a aac -movflags +faststart '
+            f'"{self._processed_path}"')
 
         for event in cancel:
             if event.is_set():
