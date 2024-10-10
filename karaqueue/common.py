@@ -339,7 +339,7 @@ class Queue:
         return '\n'.join(resp)
 
 
-karaqueue: Dict[Tuple[int, int], Queue] = {}
+queues: Dict[Tuple[int, int], Queue] = {}
 
 lock_dir = os.path.join(tempfile.gettempdir(), 'server_lock')
 if os.path.exists(lock_dir):
@@ -379,9 +379,10 @@ async def get_queue(ctx: utils.DiscordContext) -> Queue:
         await utils.respond(ctx, content=f'Error: {msg}', ephemeral=True)
         raise ValueError(f'{msg}: {key[0]}')
     with named_lock('get_queue'):
-        if key not in karaqueue:
-            karaqueue[key] = Queue(guild_id=key[0], channel_id=key[1])
-    return karaqueue[key]
+        if key not in queues:
+            logging.info(f'Created new queue with key {key}')
+            queues[key] = Queue(guild_id=key[0], channel_id=key[1])
+    return queues[key]
 
 
 @dataclasses.dataclass

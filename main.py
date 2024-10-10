@@ -177,16 +177,16 @@ async def _load(
         return
     video_url = video_url.strip()
     audio_url = audio_url.strip()
-    karaqueue = await common.get_queue(interaction)
-    if len(karaqueue) >= common.MAX_QUEUED:
+    q = await common.get_queue(interaction)
+    if len(q) >= common.MAX_QUEUED:
         await utils.respond(
             interaction, 'Queue is full! Delete some items with `/delete`', ephemeral=True)
         return
     if (not _is_dev_id(user.id) and
-            sum(entry.user_id == user.id for entry in karaqueue) >= karaqueue.per_user_limit):
+            sum(entry.user_id == user.id for entry in q) >= q.per_user_limit):
         await utils.respond(
             interaction,
-            f'Each user may only have {karaqueue.per_user_limit} songs in the queue!',
+            f'Each user may only have {q.per_user_limit} songs in the queue!',
             ephemeral=True)
         return
 
@@ -220,48 +220,48 @@ async def _load(
         title=video_result.title,
         original_url=video_result.original_url,
         load_fns=load_fns,
-        queue=karaqueue,
+        queue=q,
         user_id=user.id,
         pitch_shift=pitch,
         offset_ms=offset_ms)
     # Delete the loading message.
     await interaction.delete_original_response()
-    async with karaqueue.lock:
-        karaqueue.append(entry)
-        if karaqueue.current is not None:
-            await print_queue_locked(interaction, karaqueue)
+    async with q.lock:
+        q.append(entry)
+        if q.current is not None:
+            await print_queue_locked(interaction, q)
             entry.onchange_locked()
             async with new_process_task:
                 new_process_task.notify()
         else:
             logging.info('Next called from load because nothing is playing.')
-            await _next_locked(interaction, karaqueue, is_user_action=False)
+            await _next_locked(interaction, q, is_user_action=False)
 
 
 @bot.slash_command(name='pitch')
 async def command_pitch(ctx: discord.ApplicationContext, pitch: int, index: int = 0):
     """Change the pitch of a song."""
-    karaqueue = await common.get_queue(ctx)
+    q = await common.get_queue(ctx)
     current_updated = False
-    async with karaqueue.lock:
-        if index < 0 or index > len(karaqueue):
+    async with q.lock:
+        if index < 0 or index > len(q):
             await utils.respond(ctx, 'Invalid index!', ephemeral=True)
             return
         if index == 0:
-            if karaqueue.current is None:
+            if q.current is None:
                 await utils.respond(ctx, 'No song currently playing!', ephemeral=True)
                 return
-            if karaqueue.current.pitch_shift != pitch:
-                karaqueue.current.pitch_shift = pitch
-                karaqueue.current.onchange_locked()
+            if q.current.pitch_shift != pitch:
+                q.current.pitch_shift = pitch
+                q.current.onchange_locked()
                 async with new_process_task:
                     new_process_task.notify()
                 current_updated = True
-        elif index <= len(karaqueue):
-            entry = karaqueue[index-1]
+        elif index <= len(q):
+            entry = q[index-1]
             if entry.pitch_shift != pitch:
                 entry.pitch_shift = pitch
-                await print_queue_locked(ctx, karaqueue)
+                await print_queue_locked(ctx, q)
                 entry.onchange_locked()
                 async with new_process_task:
                     new_process_task.notify()
@@ -274,36 +274,36 @@ async def command_offset(
     ctx: discord.ApplicationContext, offset_ms: int, index: Optional[int] = None,
 ):
     """Change the offset of a song."""
-    karaqueue = await common.get_queue(ctx)
+    q = await common.get_queue(ctx)
     current_updated = False
-    async with karaqueue.lock:
+    async with q.lock:
         if index is None:
-            if karaqueue.global_offset_ms != offset_ms:
-                karaqueue.global_offset_ms = offset_ms
-                if karaqueue.current is not None:
-                    karaqueue.current.onchange_locked()
+            if q.global_offset_ms != offset_ms:
+                q.global_offset_ms = offset_ms
+                if q.current is not None:
+                    q.current.onchange_locked()
                     current_updated = True
-                for entry in karaqueue:
+                for entry in q:
                     entry.onchange_locked()
                 async with new_process_task:
                     new_process_task.notify()
             await utils.respond(ctx, f'Updated global offset to {offset_ms}', ephemeral=True)
         else:
-            if index < 0 or index > len(karaqueue):
+            if index < 0 or index > len(q):
                 await utils.respond(ctx, 'Invalid index!', ephemeral=True)
                 return
             if index == 0:
-                if karaqueue.current is None:
+                if q.current is None:
                     await utils.respond(ctx, 'No song currently playing!', ephemeral=True)
                     return
-                if karaqueue.current.offset_ms != offset_ms:
-                    karaqueue.current.offset_ms = offset_ms
-                    karaqueue.current.onchange_locked()
+                if q.current.offset_ms != offset_ms:
+                    q.current.offset_ms = offset_ms
+                    q.current.onchange_locked()
                     async with new_process_task:
                         new_process_task.notify()
                     current_updated = True
-            elif index <= len(karaqueue):
-                entry = karaqueue[index-1]
+            elif index <= len(q):
+                entry = q[index-1]
                 if entry.offset_ms != offset_ms:
                     entry.offset_ms = offset_ms
                     entry.onchange_locked()
@@ -318,9 +318,9 @@ async def command_offset(
 @bot.slash_command(name='list')
 async def command_list(ctx: discord.ApplicationContext):
     """Show the queue."""
-    karaqueue = await common.get_queue(ctx)
-    async with karaqueue.lock:
-        await print_queue_locked(ctx, karaqueue)
+    q = await common.get_queue(ctx)
+    async with q.lock:
+        await print_queue_locked(ctx, q)
 
 
 @bot.slash_command(name='next')
@@ -332,29 +332,30 @@ async def command_next(ctx: discord.ApplicationContext):
 
 async def _next(ctx: utils.DiscordContext, is_user_action: bool):
     """Play the next song."""
-    karaqueue = await common.get_queue(ctx)
-    async with karaqueue.lock:
-        await _next_locked(ctx, karaqueue, is_user_action=is_user_action)
+    q = await common.get_queue(ctx)
+    async with q.lock:
+        await _next_locked(ctx, q, is_user_action=is_user_action)
 
 
-async def _next_locked(ctx: utils.DiscordContext, karaqueue: common.Queue, is_user_action: bool):
+async def _next_locked(ctx: utils.DiscordContext, q: common.Queue, is_user_action: bool):
     """Play the next song."""
     now = datetime.datetime.now()
-    if karaqueue.next_advance_time is not None and now < karaqueue.next_advance_time:
+    if q.next_advance_time is not None and now < q.next_advance_time:
         if is_user_action:
             diff = math.ceil(
-                (karaqueue.next_advance_time - now).microseconds / 1e6)
+                (q.next_advance_time - now).microseconds / 1e6)
             msg = f'A new song just started! The next button will be enabled in {diff}s.'
             await utils.respond(ctx, content=msg, ephemeral=True)
         return
-    karaqueue.next_advance_time = now + datetime.timedelta(seconds=common.ADVANCE_BUFFER_SECS)
-    if karaqueue.current is not None:
-        karaqueue.current.delete()
-        karaqueue.current = None
-    if len(karaqueue) == 0:
+    q.next_advance_time = now + \
+        datetime.timedelta(seconds=common.ADVANCE_BUFFER_SECS)
+    if q.current is not None:
+        q.current.delete()
+        q.current = None
+    if len(q) == 0:
         await utils.respond(ctx, content='No songs in queue!')
         return
-    karaqueue.current = karaqueue.pop(0)
+    q.current = q.pop(0)
     async with new_process_task:
         new_process_task.notify()
     bot.loop.create_task(_update_with_current(ctx, delete_old_queue_msg=False))
@@ -362,16 +363,16 @@ async def _next_locked(ctx: utils.DiscordContext, karaqueue: common.Queue, is_us
 
 async def _update_with_current(ctx: utils.DiscordContext, delete_old_queue_msg: bool = True):
     """Update the currently playing song in the queue."""
-    karaqueue = await common.get_queue(ctx)
-    if karaqueue.local and not LAUNCH_BINARY:
+    q = await common.get_queue(ctx)
+    if q.local and not LAUNCH_BINARY:
         await utils.respond(
             ctx, content='launch_binary must be configured for local mode.', ephemeral=True)
         return
-    async with karaqueue.lock:
-        entry = karaqueue.current
+    async with q.lock:
+        entry = q.current
         if entry is None:
             return
-        await print_queue_locked(ctx, karaqueue, delete_old_queue_msg)
+        await print_queue_locked(ctx, q, delete_old_queue_msg)
     resp = await utils.respond(ctx, content=f'Loading `{entry.name}`...')
     if isinstance(resp, discord.Interaction):
         resp = await resp.original_response()
@@ -389,7 +390,7 @@ async def _update_with_current(ctx: utils.DiscordContext, delete_old_queue_msg: 
             await resp.edit(content=f'Loading `{entry.name}`...\n`' + next(spinner)*4 + '`')
             await asyncio.sleep(0.1)
     logging.info(f'Now playing {entry.name} {entry.url()}')
-    if karaqueue.local:
+    if q.local:
         await resp.edit(content=f'**Now playing**\n[`{entry.name}`](<{entry.original_url}>)')
         args = f'"{entry.video_path()}"'
         if LAUNCH_OPTS:
@@ -414,12 +415,14 @@ async def _update_with_current(ctx: utils.DiscordContext, delete_old_queue_msg: 
                         if status.filename == os.path.basename(entry.video_path()):
                             if (playback_started and
                                     (status.position == status.duration or status.position == 0)):
-                                bot.loop.create_task(_next(ctx, is_user_action=False))
+                                bot.loop.create_task(
+                                    _next(ctx, is_user_action=False))
                                 return
                             if status.position > 0 and status.position < status.duration:
                                 playback_started = True
                             if status.duration - status.position < 5000:
-                                sleep_time = (status.duration - status.position) / 1000.0 + 0.2
+                                sleep_time = (status.duration -
+                                              status.position) / 1000.0 + 0.2
                         elif playback_started:
                             # Somehow we're on the next song already, stop waiting.
                             return
@@ -444,12 +447,12 @@ async def command_remove(ctx: discord.ApplicationContext, index: int):
 
 async def _delete(ctx: discord.ApplicationContext, index: int):
     """Delete a song from the queue."""
-    karaqueue = await common.get_queue(ctx)
-    async with karaqueue.lock:
-        if index < 1 or index > len(karaqueue):
+    q = await common.get_queue(ctx)
+    async with q.lock:
+        if index < 1 or index > len(q):
             await utils.respond(ctx, 'Invalid index!', ephemeral=True)
             return
-        entry = karaqueue[index-1]
+        entry = q[index-1]
 
     class DeleteConfirmView(discord.ui.View):
         """Confirmation dialog for deleting a song."""
@@ -460,14 +463,14 @@ async def _delete(ctx: discord.ApplicationContext, index: int):
         @discord.ui.button(label='Delete', style=discord.ButtonStyle.red)
         async def delete_callback(self, _, __):
             """Delete a song from the queue."""
-            async with karaqueue.lock:
-                for i, _ in enumerate(karaqueue):
-                    if karaqueue[i] == entry:
-                        karaqueue[i].delete()
-                        del karaqueue[i]
+            async with q.lock:
+                for i, _ in enumerate(q):
+                    if q[i] == entry:
+                        q[i].delete()
+                        del q[i]
                         break
                 await utils.respond(ctx, f'Successfully deleted `{entry.title}` from the queue.')
-                await print_queue_locked(ctx, karaqueue, delete_old_queue_msg=False)
+                await print_queue_locked(ctx, q, delete_old_queue_msg=False)
             await utils.delete(ctx)
 
         @discord.ui.button(label='Cancel', style=discord.ButtonStyle.gray)
@@ -481,27 +484,27 @@ async def _delete(ctx: discord.ApplicationContext, index: int):
 @bot.slash_command(name='move')
 async def command_move(ctx: discord.ApplicationContext, index_from: int, index_to: int):
     """Change the position of a song in the queue."""
-    karaqueue = await common.get_queue(ctx)
-    async with karaqueue.lock:
-        if (index_from < 1 or index_from > len(karaqueue)
-                or index_to < 1 or index_to > len(karaqueue)):
+    q = await common.get_queue(ctx)
+    async with q.lock:
+        if (index_from < 1 or index_from > len(q)
+                or index_to < 1 or index_to > len(q)):
             await utils.respond(ctx, 'Invalid index!', ephemeral=True)
             return
-        entry = karaqueue[index_from-1]
-        del karaqueue[index_from-1]
-        karaqueue.insert(index_to-1, entry)
-        await print_queue_locked(ctx, karaqueue)
+        entry = q[index_from-1]
+        del q[index_from-1]
+        q.insert(index_to-1, entry)
+        await print_queue_locked(ctx, q)
 
 
 @bot.slash_command(name='reload')
 async def command_reload(ctx: discord.ApplicationContext):
     """Reload the current song."""
-    karaqueue = await common.get_queue(ctx)
-    async with karaqueue.lock:
-        if not karaqueue.current:
+    q= await common.get_queue(ctx)
+    async with q.lock:
+        if not q.current:
             await utils.respond(ctx, 'No current song to reload!', ephemeral=True)
             return
-        karaqueue.current.onchange_locked()
+        q.current.onchange_locked()
         async with new_process_task:
             new_process_task.notify()
     await utils.respond(ctx, content='Success', ephemeral=True)
@@ -517,19 +520,20 @@ async def is_dev(ctx: commands.Context) -> bool:
 @commands.check(is_dev)
 async def command_dev(ctx: discord.ApplicationContext, command: str):
     """Dev commands."""
-    karaqueue = await common.get_queue(ctx)
+    q = await common.get_queue(ctx)
     if command == 'info':
         key = await common.get_queue_key(ctx)
         msg = f'Current queue: {key}'
         msg = msg + '\nAll queues:'
-        for queue_key, queue in common.karaqueue.items():
+        for queue_key, queue in common.queues.items():
             msg = msg + f'\n{queue_key} [{id(queue)}]'
             if queue.current:
-                msg = msg + f'\nCurrent: [`{queue.current.name}`](<{queue.current.original_url}>)'
+                msg = msg + \
+                    f'\nCurrent: [`{queue.current.name}`](<{queue.current.original_url}>)'
             contents = queue.format()
             if contents:
                 msg = msg + f'\n{contents}'
-        if karaqueue.local and PLAYER:
+        if q.local and PLAYER:
             player = players.player_lookup[PLAYER]
             status = await player.get_status()
             if status is None:
@@ -538,42 +542,42 @@ async def command_dev(ctx: discord.ApplicationContext, command: str):
                 msg = msg + f'\n{status}'
         await utils.respond(ctx, content=msg, ephemeral=True)
     elif command == 'local':
-        karaqueue.local = not karaqueue.local
+        q.local = not q.local
         await utils.respond(ctx, content='Success', ephemeral=True)
     elif command.startswith('limit '):
         try:
             value = float(command[len('limit '):])
         except ValueError:
             await utils.respond(ctx, content=f'Unrecognized command {command}', ephemeral=True)
-        karaqueue.per_user_limit = value
+        q.per_user_limit = value
         await utils.respond(ctx, content='Success', ephemeral=True)
     else:
         await utils.respond(ctx, content=f'Unrecognized command {command}', ephemeral=True)
 
 
 async def print_queue_locked(
-    ctx: utils.DiscordContext, karaqueue: common.Queue, delete_old_queue_msg: bool = True,
+    ctx: utils.DiscordContext, q: common.Queue, delete_old_queue_msg: bool = True,
 ):
     """Print the current queue."""
-    if delete_old_queue_msg and karaqueue.msg_id is not None:
+    if delete_old_queue_msg and q.msg_id is not None:
         try:
             channel = typing.cast(discord.TextChannel,
-                                  bot.get_channel(karaqueue.channel_id))
-            message = await channel.fetch_message(karaqueue.msg_id)
+                                  bot.get_channel(q.channel_id))
+            message = await channel.fetch_message(q.msg_id)
             await message.delete()
         except Exception:  # pylint: disable=broad-exception-caught
             # Message already deleted, etc.
             pass
-    karaqueue.msg_id = None
+    q.msg_id = None
 
     msg = ''
-    if karaqueue.current:
-        msg = f'**Now playing**\n`{karaqueue.current.name}`'
-    if len(karaqueue) == 0:
+    if q.current:
+        msg = f'**Now playing**\n`{q.current.name}`'
+    if len(q) == 0:
         msg = f'{msg}\nNo songs in queue!'.strip()
         msg = await utils.respond(ctx, content=msg, view=EmptyQueueView())
     else:
-        msg = f'{msg}\n**Up Next**\n{karaqueue.format()}'.strip()
+        msg = f'{msg}\n**Up Next**\n{q.format()}'.strip()
 
         class QueueView(EmptyQueueView):
             """Discord view for when queue is not empty. Has a Next Song button."""
@@ -588,7 +592,7 @@ async def print_queue_locked(
 
     if isinstance(msg, discord.Interaction):
         msg = await msg.original_response()
-    karaqueue.msg_id = msg.id
+    q.msg_id = msg.id
 
 
 def main(_):
@@ -604,11 +608,11 @@ def main(_):
             entry_to_process = None
             async with new_process_task:
                 # Find next entry to process.
-                for karaqueue in common.karaqueue.values():
-                    if karaqueue.current is not None and not karaqueue.current.processed:
-                        entry_to_process = karaqueue.current
+                for q in common.queues.values():
+                    if q.current is not None and not q.current.processed:
+                        entry_to_process = q.current
                     else:
-                        for entry in karaqueue:
+                        for entry in q:
                             if not entry.processed:
                                 entry_to_process = entry
                                 break
