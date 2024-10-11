@@ -523,7 +523,7 @@ async def command_dev(ctx: discord.ApplicationContext, command: str):
     q = await common.get_queue(ctx)
     if command == 'info':
         key = await common.get_queue_key(ctx)
-        msg = f'Current queue: {key}'
+        msg = f'Current queue: {key} [{id(q)}]'
         msg = msg + '\nAll queues:'
         for queue_key, queue in common.queues.items():
             msg = msg + f'\n{queue_key} [{id(queue)}]'
@@ -533,6 +533,7 @@ async def command_dev(ctx: discord.ApplicationContext, command: str):
             contents = queue.format()
             if contents:
                 msg = msg + f'\n{contents}'
+        msg += f'\nLocal mode: {q.local}'
         if q.local and PLAYER:
             player = players.player_lookup[PLAYER]
             status = await player.get_status()
@@ -543,7 +544,7 @@ async def command_dev(ctx: discord.ApplicationContext, command: str):
         await utils.respond(ctx, content=msg, ephemeral=True)
     elif command == 'local':
         q.local = not q.local
-        await utils.respond(ctx, content='Success', ephemeral=True)
+        await utils.respond(ctx, content=f'Success! Local mode is now {q.local}', ephemeral=True)
     elif command.startswith('limit '):
         try:
             value = float(command[len('limit '):])
