@@ -256,7 +256,7 @@ class Entry:
         utils.call(
             'ffmpeg',
             f'-hwaccel cuda -i "{title_video_path}" -i "{main_video_path}" -filter_complex '
-            '"[0:v]format=yuv420p[v0];[1:v]format=yuv420p[v1];'
+            '"[0:v]format=yuv420p[v0];[1:v]setsar=1,format=yuv420p[v1];'
             '[v0][0:a][v1][1:a]concat=n=2:v=1:a=1[v][a]" '
             '-map "[v]" -map "[a]" -c:v libx264 -c:a aac -movflags +faststart '
             f'"{self._processed_path}"')

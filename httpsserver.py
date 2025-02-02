@@ -9,25 +9,13 @@ import os
 import re
 import ssl
 import sys
+import threading
 from typing import Optional, Tuple
 import urllib.parse
 
+from socketserver import ThreadingMixIn
 
-def setup_logging():
-    """Set up logging."""
-    # Clear handlers from imports.
-    logging.getLogger().handlers = []
-    fmt = '%(asctime)s %(levelname)-8s %(message)s'
-    datefmt = '%Y-%m-%d %H:%M:%S'
-    formatter = logging.Formatter(fmt, datefmt)
-    logging.basicConfig(level=logging.INFO, format=fmt, datefmt=datefmt)
-    file_handler = logging.FileHandler(
-        os.path.join(os.path.dirname(__file__), 'httpsserver.log'))
-    file_handler.formatter = formatter
-    logging.getLogger().addHandler(file_handler)
-
-
-setup_logging()
+logger = logging.getLogger(__name__)
 
 
 cwd = os.path.dirname(__file__)
@@ -41,8 +29,12 @@ cfg.read(os.path.join(cwd, 'config.ini'))
 
 
 HOSTNAME = cfg['DEFAULT']['internal_host']
-PORT = 443
-CERT_DIR = os.path.join(cwd, 'certs')
+CERTFILE = cfg['DEFAULT']['certfile']
+if not os.path.isabs(CERTFILE):
+    CERTFILE = os.path.join(cwd, CERTFILE)
+KEYFILE = cfg['DEFAULT']['keyfile']
+if not os.path.isabs(KEYFILE):
+    KEYFILE = os.path.join(cwd, KEYFILE)
 
 
 def copy_byte_range(infile, outfile, start=None, stop=None, bufsize=16*1024):
@@ -227,10 +219,34 @@ class RangeRequestHandler(http.server.SimpleHTTPRequestHandler):
         copy_byte_range(source, outputfile, start, stop)
 
 
-httpd = http.server.HTTPServer((HOSTNAME, PORT), RangeRequestHandler)
-context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-context.load_cert_chain(certfile=os.path.join(
-    CERT_DIR, 'cert.crt'), keyfile=os.path.join(CERT_DIR, 'cert.key'))
-httpd.socket = context.wrap_socket(httpd.socket, server_side=True)
-logging.info(f'Serving on {httpd.server_address}')
-httpd.serve_forever()
+class ThreadingHTTPServer(ThreadingMixIn, http.server.HTTPServer):
+    daemon_threads = True
+
+
+def serve(port, use_cert):
+    httpd = ThreadingHTTPServer((HOSTNAME, port), RangeRequestHandler)
+    if use_cert:
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(
+            certfile=CERTFILE,
+            keyfile=KEYFILE,
+        )
+        httpd.socket = context.wrap_socket(httpd.socket, server_side=True)
+    logger.info(f'Serving on {httpd.server_address}')
+    httpd.serve_forever()
+
+
+if __name__ == '__main__':
+    # Clear handlers from imports.
+    logging.getLogger().handlers = []
+    fmt = '%(asctime)s %(levelname)-8s %(message)s'
+    datefmt = '%Y-%m-%d %H:%M:%S'
+    formatter = logging.Formatter(fmt, datefmt)
+    logging.basicConfig(level=logging.INFO, format=fmt, datefmt=datefmt)
+    file_handler = logging.FileHandler(
+        os.path.join(os.path.dirname(__file__), 'httpsserver.log'))
+    file_handler.formatter = formatter
+    logging.getLogger().addHandler(file_handler)
+
+    threading.Thread(target=serve, args=[80, False]).start()
+    serve(443, True)

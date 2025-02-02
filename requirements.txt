@@ -1,8 +1,9 @@
 absl-py
 beautifulsoup4
 bilix
+curl_cffi
 py-cord[speed]
-git+https://github.com/oncename/pytube.git
+git+https://github.com/yt-dlp/yt-dlp.git
 requests
 soundcloud-lib
 StringProgressBar
