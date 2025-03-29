@@ -4,6 +4,8 @@ import functools
 import logging
 import os
 import re
+import shutil
+import tempfile
 from typing import Any, List
 import discord
 from yt_dlp import YoutubeDL
@@ -29,10 +31,8 @@ class YoutubeDownloader(common.Downloader):
     ) -> common.DownloadResult:
         parts = re.split(YOUTUBE_PATTERN, url)
         if len(parts) < 3:
-            raise ValueError('Unrecognized url!')
+            raise ValueError(f'Unrecognized url! {url}')
         vid = re.split(r'[^0-9a-zA-Z_-]', parts[2])[0]
-        if len(vid) != 11:
-            raise ValueError('Unrecognized url!')
 
         await utils.edit(interaction, content=f'Loading youtube id `{vid}`...')
         url = f'http://youtube.com/watch?v={vid}'
@@ -59,36 +59,38 @@ class YoutubeDownloader(common.Downloader):
                 total_bytes = args.get('total_bytes', None)
                 if total_bytes is None and args.get('total_bytes_estimate', None) is not None:
                     total_bytes = args['total_bytes_estimate']
-                downloaded = args.get('downloaded_bytes', 0)
+                downloaded = int(args.get('downloaded_bytes', 0))
                 if total_bytes is None:
                     entry.load_msg = (
                         f'Loading youtube video `{title}`...\n'
                         f'Downloading... {downloaded} bytes downloaded')
                 else:
                     progress = StringProgressBar.progressBar.filledBar(
-                        total_bytes, downloaded)  # type: ignore
+                        int(total_bytes), downloaded)  # type: ignore
                     total_bytes_mb = max(downloaded, total_bytes) / 1024 / 1024
                     entry.load_msg = (
                         f'Loading youtube video `{title}`...\n'
                         f'Downloading: {progress[0]} {progress[1]:0.0f}% of {total_bytes_mb:0.1f}Mb')
 
+            download_path = tempfile.mktemp(dir=entry.path, suffix='.mp4')
             ydl_opts: dict[str, Any] = {
-                'format': 'best[ext=mp4]',
+                'format': 'bv+ba/b',
+                'postprocessors': [{'key': 'FFmpegVideoConvertor', 'preferedformat': 'mp4'}],
                 'paths': {'home': entry.path},
-                'outtmpl': {'default': 'download.%(ext)s'},
+                'outtmpl': {'default': download_path},
                 'progress_hooks': [progress_func],
             }
             with YoutubeDL(ydl_opts) as ydl:
                 ydl.download([url])
-            video_path = 'download.mp4'
 
             result = common.LoadResult()
-            if video:
-                result.video_path = video_path
             if audio:
                 result.audio_path = 'audio.mp3'
-                utils.call('ffmpeg', f'-i "{os.path.join(entry.path, video_path)}" '
-                           f'-ac 2 -f mp3 "{os.path.join(entry.path, result.audio_path)}"')
+                utils.call('ffmpeg', f'-i "{download_path}" '
+                        f'-ac 2 -f mp3 "{os.path.join(entry.path, result.audio_path)}"')
+            if video:
+                result.video_path = 'video.mp4'
+                shutil.move(download_path, os.path.join(entry.path, 'video.mp4'))
             return result
 
         return common.DownloadResult(

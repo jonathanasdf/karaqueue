@@ -207,7 +207,7 @@ async def _load(
         await utils.respond(interaction, f'Error: {err}', ephemeral=True)
         return
     load_fns = [video_result.load_fn]
-    if audio_url != "":
+    if audio_url:
         try:
             audio_result = await download(audio_url, video=False, audio=True)
         except Exception as err:  # pylint: disable=broad-except
